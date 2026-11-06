@@ -26,6 +26,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
+from pydantic import ValidationError
 
 from urllib.parse import urlparse
 
@@ -129,6 +130,23 @@ async def _run(fn: Callable[[Ops], Any]) -> Any:
     return await anyio.to_thread.run_sync(work)
 
 
+def _build(model, **kwargs):
+    """Validate tool input with a message an AI can act on, e.g.
+    "Invalid input: state: Unknown state 'Iowaa'. Use a two-letter code. Covered states: IA (Iowa), ..."."""
+    try:
+        return model(**kwargs)
+    except ValidationError as e:
+        parts = []
+        for err in e.errors():
+            loc = ".".join(str(x) for x in err["loc"]) or "input"
+            msg = err["msg"].removeprefix("Value error, ")
+            parts.append(f"{loc}: {msg}" if loc != "input" else msg)
+        raise ToolError("Invalid input: " + "; ".join(parts)) from None
+
+
+Num = float | str            # numbers may arrive as "350k", "$1.05M", "10.5%"
+Count = int | str | None     # "20", "20+", "20 years"
+
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 
 
@@ -136,41 +154,44 @@ def register_tools(server: MCPServer) -> None:
     @server.tool(annotations=READ)
     async def search_targets(
         industry: str | None = None,
-        naics_codes: list[str] | None = None,
+        naics_codes: list[str | int] | str | int | None = None,
         state: str | None = None,
-        counties: list[str] | None = None,
+        counties: list[str] | str | None = None,
         city: str | None = None,
         name_contains: str | None = None,
-        min_years_in_business: int | None = None,
-        min_employees: int | None = None,
-        max_employees: int | None = None,
-        min_payroll: float | None = None,
-        max_payroll: float | None = None,
-        min_score: int | None = None,
+        min_years_in_business: Count = None,
+        min_employees: Count = None,
+        max_employees: Count = None,
+        min_payroll: Num | None = None,
+        max_payroll: Num | None = None,
+        min_score: Count = None,
         include_unknown_size: bool = True,
         in_buy_box: bool = False,
         sort: str = "priority",
-        limit: int = 25,
+        limit: int = 10,
         offset: int = 0,
     ) -> dict[str, Any]:
         """Find off-market businesses matching criteria, ranked by likelihood-to-sell score (0-100).
 
         industry: plain words like "pest control", "janitorial", "insurance agency", "auto repair",
-        "landscaping", "bookkeeping", or a NAICS code. state: IA, CO, NY, CT, OR or TX (omit for all).
+        "landscaping", "bookkeeping", or a NAICS code; anything else falls back to a business-name match
+        (the response says so). naics_codes adds codes/prefixes; industry and naics_codes combine as "either".
+        state: IA, CO, NY, CT, OR or TX, or the state name (omit for all).
         counties: county names (populated for NY and PPP-matched businesses; sparse elsewhere). Size filters use
         estimated employees / annual payroll from PPP data; include_unknown_size keeps businesses with no
-        estimate. limit is capped at 50 per call; page with offset/next_offset.
+        estimate. limit defaults to 10 (each result costs context and quota); ask for up to 50 when the user
+        wants a longer list, and page with offset/next_offset. Repeat views of a business don't use quota.
 
         Each result has three scores: score (likely to sell), buy_score (fit for the user's buy box: industry
         quality, est. price vs. their range, debt coverage at their rate, cash to close) and priority (both
         combined). sort: "priority" (default), "sell" or "buy". in_buy_box=true limits results to the buy
         box's industries and states.
         """
-        p = SearchParams(industry=industry, naics_codes=naics_codes, state=state, counties=counties, city=city,
+        p = _build(SearchParams, industry=industry, naics_codes=naics_codes, state=state, counties=counties, city=city,
                          name_contains=name_contains, min_years_in_business=min_years_in_business,
                          min_employees=min_employees, max_employees=max_employees, min_payroll=min_payroll,
                          max_payroll=max_payroll, min_score=min_score, include_unknown_size=include_unknown_size,
-                         in_buy_box=in_buy_box, sort=sort if sort in ("priority", "sell", "buy") else "priority",
+                         in_buy_box=in_buy_box, sort=sort,
                          limit=max(1, min(limit, 50)), offset=offset)
         return await _run(lambda ops: ops.search_targets(p))
 
@@ -196,21 +217,21 @@ def register_tools(server: MCPServer) -> None:
     @server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
                                              open_world_hint=False))
     async def set_buy_box(
-        interest_rate_pct: float,
-        industries: list[str] | None = None,
-        states: list[str] | None = None,
-        min_price: float = 500_000,
-        max_price: float = 5_000_000,
-        cash_available: float = 300_000,
+        interest_rate_pct: Num,
+        industries: list[str] | str | None = None,
+        states: list[str] | str | None = None,
+        min_price: Num = 500_000,
+        max_price: Num = 5_000_000,
+        cash_available: Num = 300_000,
         term_years: int = 10,
-        target_multiple: float | None = None,
-        min_dscr: float = 1.25,
-        buyer_salary: float = 80_000,
+        target_multiple: Num | None = None,
+        min_dscr: Num = 1.25,
+        buyer_salary: Num = 80_000,
     ) -> dict[str, Any]:
         """Save the user's buy box. Replaces the whole box, so read it first with get_buy_box and pass
         every field. Ask the user for anything you don't know, especially interest_rate_pct (their quoted SBA
         rate) and cash_available (down payment + closing costs they can bring)."""
-        inp = BuyBoxInput(industries=industries or [], states=states or [], min_price=min_price, max_price=max_price,
+        inp = _build(BuyBoxInput, industries=industries or [], states=states or [], min_price=min_price, max_price=max_price,
                           cash_available=cash_available, interest_rate_pct=interest_rate_pct, term_years=term_years,
                           target_multiple=target_multiple, min_dscr=min_dscr, buyer_salary=buyer_salary)
         return await _run(lambda ops: ops.set_buy_box(inp))
@@ -224,20 +245,20 @@ def register_tools(server: MCPServer) -> None:
 
     @server.tool(annotations=READ)
     async def sba_deal_math(
-        purchase_price: float,
-        cash_flow: float,
-        interest_rate_pct: float,
+        purchase_price: Num,
+        cash_flow: Num,
+        interest_rate_pct: Num,
         cash_flow_type: str = "sde",
         term_years: int = 10,
-        equity_injection_pct: float = 10,
-        seller_note_pct: float = 0,
-        seller_note_rate_pct: float = 6,
+        equity_injection_pct: Num = 10,
+        seller_note_pct: Num = 0,
+        seller_note_rate_pct: Num = 6,
         seller_note_term_years: int = 10,
         seller_note_full_standby: bool = False,
-        buyer_salary: float | None = None,
-        closing_cost_pct: float = 3.5,
-        working_capital: float = 0,
-        min_dscr: float = 1.25,
+        buyer_salary: Num | None = None,
+        closing_cost_pct: Num = 3.5,
+        working_capital: Num = 0,
+        min_dscr: Num = 1.25,
     ) -> dict[str, Any]:
         """Run an SBA 7(a) acquisition scenario: loan size, monthly/annual debt service, DSCR vs the lender
         threshold, buyer cash needed, cash flow after debt, payback, and a plain-English verdict.
@@ -246,7 +267,7 @@ def register_tools(server: MCPServer) -> None:
         ask the user or use a current quote; never assume a rate. To price at a multiple, compute
         purchase_price = multiple x SDE first.
         """
-        inp = DealInputs(purchase_price=purchase_price, cash_flow=cash_flow, cash_flow_type=cash_flow_type,
+        inp = _build(DealInputs, purchase_price=purchase_price, cash_flow=cash_flow, cash_flow_type=cash_flow_type,
                          interest_rate_pct=interest_rate_pct, term_years=term_years,
                          equity_injection_pct=equity_injection_pct, seller_note_pct=seller_note_pct,
                          seller_note_rate_pct=seller_note_rate_pct, seller_note_term_years=seller_note_term_years,
@@ -279,15 +300,19 @@ def register_tools(server: MCPServer) -> None:
         saved_status: str | None = None,
         industry: str | None = None,
         state: str | None = None,
-        counties: list[str] | None = None,
-        min_years_in_business: int | None = None,
-        min_score: int | None = None,
+        counties: list[str] | str | None = None,
+        min_years_in_business: Count = None,
+        min_score: Count = None,
+        max_rows: int = 100,
     ) -> dict[str, Any]:
-        """CSV export of either the user's saved pipeline (saved=true) or a search. Returns the CSV text in
-        `csv`; offer to save it as a file for the user. Search exports count toward the monthly row limit."""
-        sp = None if saved else SearchParams(industry=industry, state=state, counties=counties,
+        """CSV export of either the user's saved pipeline (saved=true) or a search, ranked by priority.
+        Returns the CSV text in `csv`; offer to save it as a file for the user. max_rows defaults to 100 to keep
+        the CSV a reasonable size in this conversation (up to 500); for bigger exports point the user to the web
+        app's Export CSV button. Search exports count toward the row quota (businesses already seen don't)."""
+        sp = None if saved else _build(SearchParams, industry=industry, state=state, counties=counties,
                                              min_years_in_business=min_years_in_business, min_score=min_score)
-        return await _run(lambda ops: ops.export_targets(sp, saved, saved_status))
+        cap = max(1, min(int(max_rows), 500))
+        return await _run(lambda ops: ops.export_targets(sp, saved, saved_status, max_rows=cap))
 
 
 def build_server(http: bool = False) -> MCPServer:

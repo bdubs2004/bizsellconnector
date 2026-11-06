@@ -8,6 +8,7 @@ import psycopg
 
 from ..industries import BY_NAICS
 from ..score import MODEL_VERSION, WEIGHTS, attach_breakdowns
+from .. import inputs
 from ..buy import BASE as BUY_BASE
 from ..buy import BUY_MODEL_VERSION, annotate
 from ..ingest.states import SOURCES as STATE_SOURCES
@@ -28,7 +29,7 @@ class NotFound(Exception):
 
 def _uuid(business_id: str) -> uuid.UUID:
     try:
-        return uuid.UUID(str(business_id))
+        return uuid.UUID(inputs.business_id(business_id))
     except ValueError:
         raise NotFound(f"No business with id {business_id!r}")
 

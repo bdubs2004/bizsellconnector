@@ -147,8 +147,9 @@ def test_cross_state_search_and_market(conn):
     assert co["results"][0]["data_as_of"]["state_registry"]
     m = search.market_summary(conn, None, "pest control")
     assert set(m["by_state"]) >= {"IA", "CO", "TX"}
-    none = search.search_targets(conn, SearchParams(state="WY"), limit=10)
-    assert none["returned"] == 0 and any("Covered states" in n for n in none["notes"])
+    with pytest.raises(ValueError, match="Covered states"):
+        SearchParams(state="WY")
+    assert SearchParams(state="Colorado").state == "CO" and SearchParams(state=" tx ").state == "TX"
 
 
 def test_delinquent_penalized_with_reason(conn):

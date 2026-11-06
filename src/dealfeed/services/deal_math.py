@@ -10,7 +10,9 @@ Simplifications, all stated in the output:
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from ..inputs import number
 
 
 class DealInputs(BaseModel):
@@ -34,6 +36,22 @@ class DealInputs(BaseModel):
     closing_cost_pct: float = Field(3.5, ge=0, le=20, description="Closing costs as % of price, paid in cash")
     working_capital: float = Field(0, ge=0, description="Extra cash the buyer must bring for working capital")
     min_dscr: float = Field(1.25, gt=0, description="Lender DSCR threshold")
+
+    @field_validator("purchase_price", "cash_flow", "interest_rate_pct", "equity_injection_pct", "seller_note_pct",
+                     "seller_note_rate_pct", "buyer_salary", "closing_cost_pct", "working_capital", "min_dscr",
+                     mode="before")
+    @classmethod
+    def _numbers(cls, v):
+        return number(v)            # '1,050,000', '$1.05M', '350k', '10.5%'
+
+    @field_validator("cash_flow_type", mode="before")
+    @classmethod
+    def _cf_type(cls, v):
+        s = str(v).strip().lower() if v is not None else "sde"
+        if s not in ("sde", "ebitda"):
+            raise ValueError("cash_flow_type must be 'sde' (seller's discretionary earnings) or 'ebitda'. "
+                             "Revenue isn't cash flow: estimate SDE first.")
+        return s
 
     @model_validator(mode="after")
     def _check_mix(self):

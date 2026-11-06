@@ -18,8 +18,8 @@ class Ops:
             raise PlanError(f"The {user.plan.name} plan doesn't include AI-assistant (MCP) access. "
                             "Upgrade to Searcher or above.")
 
-    def _meter(self, tool: str, rows: int) -> None:
-        accounts.record_usage(self.conn, self.user, tool, rows, self.surface)
+    def _meter(self, tool: str, rows: int, business_ids: list | None = None) -> None:
+        accounts.record_usage(self.conn, self.user, tool, rows, self.surface, business_ids)
 
     def buy_box(self):
         return buybox.get_buy_box(self.conn, self.user.id)
@@ -35,13 +35,13 @@ class Ops:
     def search_targets(self, params: search.SearchParams) -> dict:
         limit = accounts.allowed_rows(self.conn, self.user, params.limit)
         out = search.search_targets(self.conn, params, limit, self.today, box=self.buy_box())
-        self._meter("search_targets", out["returned"])
+        self._meter("search_targets", out["returned"], [r["business_id"] for r in out["results"]])
         return out
 
     def get_business(self, business_id: str) -> dict:
         accounts.allowed_rows(self.conn, self.user, 1)
         out = business.get_business(self.conn, business_id, self.user.id, self.today)
-        self._meter("get_business", 1)
+        self._meter("get_business", 1, [out["business_id"]])
         return out
 
     def explain_score(self, business_id: str) -> dict:
@@ -84,11 +84,11 @@ class Ops:
         return out
 
     def export_targets(self, search_params: search.SearchParams | None = None, saved: bool = False,
-                       saved_status: str | None = None) -> dict:
+                       saved_status: str | None = None, max_rows: int | None = None) -> dict:
         plan = self.user.plan
         if not plan.export:
             raise PlanError(f"Exports aren't included in the {plan.name} plan.")
-        max_rows = plan.max_export_rows
+        max_rows = min(plan.max_export_rows, max_rows) if max_rows else plan.max_export_rows
         if plan.rows_per_month is not None and not saved:
             remaining = plan.rows_per_month - accounts.rows_used_this_month(self.conn, self.user)
             if remaining <= 0:
@@ -101,7 +101,8 @@ class Ops:
             max_rows = min(max_rows, day_left)
         out = targets.export_targets(self.conn, self.user.id, max_rows, search_params, saved_status, saved, self.today)
         # Exporting your own saved list doesn't count against the quota; exporting search results does.
-        self._meter("export_targets", 0 if saved else out["rows"])
+        ids = out.pop("business_ids")
+        self._meter("export_targets", 0 if saved else out["rows"], None if saved else ids)
         return out
 
     def me(self) -> dict:

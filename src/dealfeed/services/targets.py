@@ -8,6 +8,7 @@ from datetime import date
 import psycopg
 
 from ..buy import annotate
+from .. import inputs
 from ..security import clean_user_text
 from ..score import attach_breakdowns
 from .buybox import get_buy_box
@@ -20,8 +21,7 @@ NOTES_MAX = 2000
 
 def save_target(conn: psycopg.Connection, user_id, business_id: str, status: str = "new",
                 notes: str | None = None) -> dict:
-    if status not in STATUSES:
-        raise ValueError(f"status must be one of {STATUSES}")
+    status = inputs.pipeline_status(status) or "new"
     if notes is not None and len(notes) > NOTES_MAX:
         raise ValueError(f"Notes are limited to {NOTES_MAX} characters.")
     notes = clean_user_text(notes, NOTES_MAX)
@@ -55,9 +55,8 @@ def _saved_rows(conn: psycopg.Connection, user_id, status: str | None, limit: in
         "t.updated_at AS pipeline_updated,", 1)
     sql = f"{select} JOIN saved_targets t ON t.business_id = b.id WHERE t.user_id = %(user)s AND NOT b.suppressed"
     args: dict = {"user": user_id}
+    status = inputs.pipeline_status(status, allow_all=True)
     if status:
-        if status not in STATUSES:
-            raise ValueError(f"status must be one of {STATUSES}")
         sql += " AND t.status = %(status)s"
         args["status"] = status
     sql += " ORDER BY t.updated_at DESC"
@@ -116,4 +115,4 @@ def export_targets(conn: psycopg.Connection, user_id, max_rows: int, search: Sea
     else:
         params = (search or SearchParams()).model_copy(update={"sort": "sell"} if max_rows > 1000 else {})
         rows, _, _ = search_rows(conn, params, limit=max_rows, offset=0, box=get_buy_box(conn, user_id))
-    return {"rows": len(rows), "csv": _csv(rows, today)}
+    return {"rows": len(rows), "csv": _csv(rows, today), "business_ids": [str(r["id"]) for r in rows]}

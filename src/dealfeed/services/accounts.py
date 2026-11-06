@@ -161,10 +161,22 @@ def allowed_rows(conn: psycopg.Connection, user: User, requested: int) -> int:
     return n
 
 
-def record_usage(conn: psycopg.Connection, user: User, tool: str, rows: int, surface: str) -> None:
+def record_usage(conn: psycopg.Connection, user: User, tool: str, rows: int, surface: str,
+                 business_ids: list | None = None) -> int:
+    """Log a call. With business_ids, only businesses this user hasn't seen yet this month are charged
+    (rows_returned = newly charged rows), so repeat views and overlapping searches are free.
+    Returns the number of rows charged."""
+    charged = rows
+    if business_ids:
+        charged = len(conn.execute(
+            "INSERT INTO row_views (user_id, month, business_id) "
+            "SELECT %s, date_trunc('month', now())::date, unnest(%s::uuid[]) "
+            "ON CONFLICT DO NOTHING RETURNING business_id",
+            (user.id, [str(b) for b in business_ids])).fetchall())
     conn.execute("INSERT INTO api_usage (user_id, tool, surface, rows_returned) VALUES (%s, %s, %s, %s)",
-                 (user.id, tool, surface, rows))
+                 (user.id, tool, surface, charged))
     conn.commit()
+    return charged
 
 
 def usage_summary(conn: psycopg.Connection, user: User) -> dict:

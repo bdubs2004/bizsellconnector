@@ -51,7 +51,7 @@ cp .env.example .env && set -a && source .env && set +a
 dealfeed migrate
 dealfeed demo                              # loads tests/fixtures/*, builds, prints a demo API key
 dealfeed serve                             # web app at http://localhost:8000, API docs at /docs
-pytest -q                                  # 98 tests; DROPS the dealfeed_test schema each run
+pytest -q                                  # 136 tests; DROPS the dealfeed_test schema each run
 ```
 
 Try it:
@@ -74,6 +74,23 @@ See [SECURITY.md](SECURITY.md). Highlights:
 - **Production:** refuses to start with insecure settings.
 
 **Operator to-do:** make this repo private and work through the checklist in SECURITY.md.
+
+## Testing it like an AI would
+
+`scripts/ai_harness.py` connects to the MCP server like Claude does and fires hundreds of tool calls:
+- every toggle combination: sort, buy box, states, industries, size filters, paging
+- the messy inputs AIs really send: "Iowa", "350k", "20+", "Polk County, IA", "Researching", padded IDs
+- out-of-range and contradictory values
+
+It checks that nothing fails internally, that filters and rankings hold, that error messages say how to
+fix the input, and it reports response sizes, latency and metering.
+
+```bash
+DATABASE_URL=postgresql://.../dealfeed python scripts/ai_harness.py --random 150
+```
+
+Last run against 383k real businesses: 547 calls, 0 findings, median 42 ms, p95 117 ms.
+`tests/test_ai_inputs.py` keeps everything it found fixed.
 
 ## Three scores
 

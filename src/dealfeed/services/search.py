@@ -6,7 +6,9 @@ from datetime import date
 from typing import Annotated, Literal
 
 import psycopg
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from .. import inputs
 
 from ..config import get_settings
 from ..industries import BY_NAICS, resolve_industry
@@ -35,7 +37,7 @@ class SearchParams(BaseModel):
         None, max_length=20, description="NAICS codes or prefixes, e.g. ['561710'] or ['5617']")
     name_contains: str | None = Field(None, max_length=80, description="Substring of the business name")
     counties: list[Annotated[str, Field(max_length=40)]] | None = Field(
-        None, max_length=20, description="County names, e.g. ['Polk', 'Story']")
+        None, max_length=20, description="County names, e.g. ['Polk', 'Story'] ('Polk County, IA' works too)")
     city: str | None = Field(None, max_length=60)
     min_years_in_business: int | None = Field(None, ge=0)
     min_employees: int | None = Field(None, ge=0)
@@ -52,6 +54,57 @@ class SearchParams(BaseModel):
                                 "sell score; buy = fit for your buy box")
     limit: int = Field(25, ge=1, le=50)
     offset: int = Field(0, ge=0, le=1_000, description="Paging depth is capped at 1,000: narrow the filters instead")
+
+    # Lenient parsing: accept what AIs and people actually send (see inputs.py)
+    @field_validator("state", mode="before")
+    @classmethod
+    def _state(cls, v):
+        return inputs.state_code(v)
+
+    @field_validator("sort", mode="before")
+    @classmethod
+    def _sort(cls, v):
+        return inputs.sort_key(v)
+
+    @field_validator("counties", mode="before")
+    @classmethod
+    def _counties(cls, v):
+        if v is None:
+            return None
+        items = [v] if isinstance(v, str) else v
+        out = [inputs.county(c) for x in items for c in str(x).split(";") if str(c).strip()]
+        return out or None
+
+    @field_validator("naics_codes", mode="before")
+    @classmethod
+    def _naics(cls, v):
+        if v is None:
+            return None
+        items = [v] if isinstance(v, (str, int)) else v
+        return [str(x).strip() for x in items if str(x).strip()] or None
+
+    @field_validator("min_years_in_business", "min_employees", "max_employees", "min_score", mode="before")
+    @classmethod
+    def _ints(cls, v):
+        return inputs.loose_int(v)
+
+    @field_validator("min_payroll", "max_payroll", mode="before")
+    @classmethod
+    def _money(cls, v):
+        return inputs.number(v)
+
+    @field_validator("industry", "name_contains", "city", mode="before")
+    @classmethod
+    def _blank_is_none(cls, v):
+        return v.strip() or None if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def _ranges(self):
+        if self.min_employees is not None and self.max_employees is not None and self.min_employees > self.max_employees:
+            raise ValueError(f"min_employees ({self.min_employees}) is greater than max_employees ({self.max_employees})")
+        if self.min_payroll is not None and self.max_payroll is not None and self.min_payroll > self.max_payroll:
+            raise ValueError("min_payroll is greater than max_payroll")
+        return self
 
 
 def _years(fd: date | None, today: date) -> int | None:
@@ -146,7 +199,8 @@ def _where(p: SearchParams, box: BuyBox | None = None) -> tuple[str, dict, dict]
             naics += list(ind.naics)
             resolved["industry"] = ind.label
         else:
-            # Unknown industry text: fall back to a name search so the caller still gets something.
+            # Unknown industry text: fall back to a name search so the caller still gets something,
+            # and say so (search_targets adds a note).
             clauses.append("b.normalized_name LIKE %(industry_kw)s ESCAPE '\\'")
             args["industry_kw"] = f"%{escape_like(normalize_name(p.industry))}%"
             resolved["industry_keyword_name_match"] = p.industry
@@ -240,8 +294,12 @@ def search_targets(conn: psycopg.Connection, p: SearchParams, limit: int, today:
                      f"{CANDIDATES:,} matches by sell score. Buy scores use "
                      + ("default assumptions; set your buy box to personalize them." if box.is_default
                         else "your buy box."))
-    if p.state and p.state.strip().upper() not in SUPPORTED_STATES:
-        notes.append(f"No data for {p.state.upper()} yet. Covered states: {covered_states_text()}.")
+    if resolved.get("industry_keyword_name_match"):
+        notes.append(f"'{p.industry}' isn't one of the classified industries ({', '.join(BY_SLUG)}), so this "
+                     "matched business names containing those words instead. Results may be incomplete or include "
+                     "unrelated businesses.")
+    if p.state and p.state not in SUPPORTED_STATES:
+        notes.append(f"No data for {p.state} yet. Covered states: {covered_states_text()}.")
     if limit < p.limit:
         notes.append(f"Results capped at {limit} by your plan's per-call or monthly limit.")
     return {
@@ -265,14 +323,15 @@ def market_summary(conn: psycopg.Connection, state: str | None = None, industry:
     if industry:
         ind = resolve_industry(industry)
         if not ind:
-            raise ValueError(f"Unknown industry {industry!r}. Try a NAICS code instead.")
+            raise ValueError(f"Unknown industry {industry!r}. Classified industries: {', '.join(BY_SLUG)}. "
+                             "For anything else pass a NAICS code (e.g. naics_code='238220' for plumbing/HVAC).")
         codes, label = list(ind.naics), ind.label
     if naics_code:
         codes.append(re.sub(r"\D", "", naics_code))
         label = label or (BY_NAICS[naics_code].label if naics_code in BY_NAICS else f"NAICS {naics_code}")
     if not codes:
         raise ValueError("Provide an industry or a naics_code")
-    st = state.strip().upper() if state else None
+    st = inputs.state_code(state)
     args = {"state": st, "like": [c + "%" for c in codes]}
     in_state = "(%(state)s::text IS NULL OR b.state = %(state)s)"
     base = f"FROM businesses b WHERE {in_state} AND NOT b.suppressed AND b.naics_code LIKE ANY(%(like)s)"

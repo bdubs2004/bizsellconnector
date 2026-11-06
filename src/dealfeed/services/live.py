@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 import psycopg
 
+from .. import inputs
 from ..ingest import states
 from ..normalize import normalize_name
 from ..states_meta import STATE_NAMES
@@ -48,7 +49,7 @@ def clear_cache() -> None:
 
 def check_business(conn: psycopg.Connection, business_id: str) -> dict:
     try:
-        bid = uuid.UUID(str(business_id))
+        bid = uuid.UUID(inputs.business_id(business_id))
     except ValueError:
         raise NotFound(f"No business with id {business_id!r}")
     b = conn.execute(

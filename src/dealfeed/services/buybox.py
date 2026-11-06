@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..buy import BuyBox
 from ..industries import BY_SLUG, resolve_industry
-from ..states_meta import SUPPORTED_STATES
+from .. import inputs
 
 
 class BuyBoxInput(BaseModel):
@@ -33,14 +33,22 @@ class BuyBoxInput(BaseModel):
             out.append(ind.slug)
         return sorted(set(out))
 
-    @field_validator("states")
+    @field_validator("states", mode="before")
     @classmethod
     def _states(cls, v):
-        out = sorted({s.strip().upper() for s in v if s.strip()})
-        bad = [s for s in out if s not in SUPPORTED_STATES]
-        if bad:
-            raise ValueError(f"Not covered yet: {bad}. Covered: {', '.join(SUPPORTED_STATES)}")
-        return out
+        items = [v] if isinstance(v, str) else (v or [])
+        return sorted({c for c in (inputs.state_code(x) for x in items) if c})
+
+    @field_validator("min_price", "max_price", "cash_available", "interest_rate_pct", "target_multiple", "min_dscr",
+                     "buyer_salary", mode="before")
+    @classmethod
+    def _numbers(cls, v):
+        return inputs.number(v)
+
+    @field_validator("industries", mode="before")
+    @classmethod
+    def _industries_list(cls, v):
+        return [v] if isinstance(v, str) else (v or [])
 
     @model_validator(mode="after")
     def _range(self):
