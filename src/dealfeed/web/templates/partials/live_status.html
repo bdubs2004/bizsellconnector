@@ -1,0 +1,28 @@
+<section class="card live" id="live-box" aria-live="polite">
+  <h2 class="h-sm">Current status</h2>
+  {% if not live %}
+  <p class="muted small">Our registry data is from the last monthly pull. Ask the state if it's still active today.</p>
+  <button class="btn btn-ghost" type="button"
+          hx-get="/business/{{ business_id }}/live" hx-target="#live-box" hx-swap="outerHTML"
+          hx-indicator="#live-box">Check with the state now</button>
+  <noscript><p class="small"><a href="/v1/businesses/{{ business_id }}/live-status">Check (raw API)</a></p></noscript>
+  {% else %}
+  <p class="live-verdict live-{{ live.verdict }}">{{ live.message }}</p>
+  {% if live.changes %}
+  <table class="compact">
+    <thead><tr><th></th><th>Our data</th><th>State now</th></tr></thead>
+    <tbody>{% for c in live.changes %}
+      <tr><td>{{ c.field|capitalize }}</td><td>{{ c.ours or '–' }}</td><td>{{ c.live or '–' }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+  {% endif %}
+  <p class="muted small">
+    {% if live.checked_at %}Checked {{ live.checked_at[:16]|replace('T', ' ') }} UTC{% if live.cached %} (cached){% endif %}.{% endif %}
+    {% if live.our_data_as_of %}Our data: {{ live.our_data_as_of }}.{% endif %}
+  </p>
+  {% if live.verdict == 'error' %}
+  <button class="btn btn-ghost btn-sm" type="button" hx-get="/business/{{ business_id }}/live"
+          hx-target="#live-box" hx-swap="outerHTML">Try again</button>
+  {% endif %}
+  {% endif %}
+</section>

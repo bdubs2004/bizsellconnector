@@ -152,6 +152,13 @@ def register_tools(server: MCPServer) -> None:
         """Plain-English breakdown of why a business got its likely-to-sell score, point by point."""
         return await _run(lambda ops: ops.explain_score(business_id))
 
+    @server.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True))
+    async def check_live_status(business_id: str) -> dict[str, Any]:
+        """Check a business's status with its state registry right now (one live lookup; CO, NY, CT, OR, TX;
+        not available for Iowa). Reports whether it's still active and whether its name, address or status
+        changed since our last monthly pull. Use before recommending outreach to a specific business."""
+        return await _run(lambda ops: ops.live_status(business_id))
+
     @server.tool(annotations=READ)
     async def sba_deal_math(
         purchase_price: float,

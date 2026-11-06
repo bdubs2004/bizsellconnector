@@ -263,3 +263,10 @@ table { border-collapse: collapse; width: 100%; }
   .row-form { grid-template-columns: 1fr; }
   h1 { font-size: 1.35rem; }
 }
+
+/* live status */
+#live-box.htmx-request { opacity: .6; }
+.live-verdict { font-weight: 600; margin: 0 0 8px; padding: 8px 10px; border-radius: 8px; }
+.live-active { background: var(--good-soft); color: var(--good); }
+.live-delinquent, .live-error, .live-unsupported { background: var(--warn-soft); color: var(--warn); }
+.live-not_found, .live-inactive { background: var(--bad-soft); color: var(--bad); }

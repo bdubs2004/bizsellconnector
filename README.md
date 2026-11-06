@@ -51,7 +51,7 @@ cp .env.example .env && set -a && source .env && set +a
 dealfeed migrate
 dealfeed demo                              # loads tests/fixtures/*, builds, prints a demo API key
 dealfeed serve                             # web app at http://localhost:8000, API docs at /docs
-pytest -q                                  # 66 tests; DROPS the dealfeed_test schema each run
+pytest -q                                  # 73 tests; DROPS the dealfeed_test schema each run
 ```
 
 Try it:
@@ -93,7 +93,7 @@ HTMX and Leaflet are vendored in `src/dealfeed/web/static/vendor/`, so there's n
 |---|---|
 | `/` | Landing page + free sample (top 3 per v1 industry, score 50+, 10+ years). No login needed. |
 | `/search` | Filters (state, industry, counties, city, name, years, employees, min score), map, ranked table with reasons, CSV export. Filters update results in place. |
-| `/business/{id}` | Score breakdown, size estimate, SBA loans, filings, sources; save to pipeline with status and notes. |
+| `/business/{id}` | Score breakdown, size estimate, SBA loans, filings, sources; "Check with the state now" live status; save to pipeline with status and notes. |
 | `/pipeline` | Saved targets by status; change status/notes inline; CSV export. |
 | `/deal-math` | SBA 7(a) calculator (DSCR, debt service, cash needed, verdict). |
 | `/connect` | Plan and usage, create/revoke API keys, copy-paste setup for Claude Code, Claude Desktop and the REST API. |
@@ -184,6 +184,7 @@ claude.ai and ChatGPT connectors need a real OAuth login flow; that's Phase 3 (s
 | `search_targets` | `POST /v1/targets/search` | ranked by score; filters: industry/NAICS, counties, city, years, employees, payroll, min score |
 | `get_business` | `GET /v1/businesses/{id}` | every field with source + date; never returns raw records |
 | `explain_score` | `GET /v1/businesses/{id}/score` | point-by-point |
+| `check_live_status` | `GET /v1/businesses/{id}/live-status` | asks the state registry right now (CO, NY, CT, OR, TX; not IA); flags name/address/status changes |
 | `sba_deal_math` | `POST /v1/deal-math` | interest rate is always an input |
 | `market_summary` | `GET /v1/markets/summary` | counts, age/size/score distributions, counties, 7(a) benchmarks |
 | `save_target` / `list_saved_targets` | `POST/GET/DELETE /v1/saved-targets` | pipeline statuses: new, researching, contacted, passed |

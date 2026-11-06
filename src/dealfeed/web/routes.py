@@ -214,6 +214,18 @@ def business_page(business_id: str, request: Request, conn=Depends(db.request_co
     return render(request, "business.html", user, b=b, saved=b["your_pipeline"])
 
 
+@router.get("/business/{business_id}/live", response_class=HTMLResponse)
+def business_live(business_id: str, request: Request, conn=Depends(db.request_conn),
+                  user: User = Depends(require_user)):
+    try:
+        res = Ops(conn, user, "web").live_status(business_id)
+    except NotFound:
+        return render(request, "partials/alert.html", user, 404, kind="error", message="No business with that id.")
+    if is_htmx(request):
+        return render(request, "partials/live_status.html", user, live=res, business_id=business_id)
+    return RedirectResponse(f"/business/{business_id}", status_code=303)
+
+
 @router.post("/business/{business_id}/save", response_class=HTMLResponse)
 def save_target(business_id: str, request: Request, status: str = Form("new"), notes: str = Form(""),
                 conn=Depends(db.request_conn), user: User = Depends(require_user)):

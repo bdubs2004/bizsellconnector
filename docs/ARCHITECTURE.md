@@ -117,3 +117,11 @@ a pipeline row, a deal-math result. Pages call `Ops(conn, user, "web")`, so plan
 Sessions are signed cookies (Starlette `SessionMiddleware`, SameSite=Lax, Secure in production). Login
 `next=` only accepts local paths, and map JSON escapes `<` so a business name can't break out of its
 `<script>` tag.
+
+**Live status check** (`services/live.py`, `states.live_lookup`). One Socrata query by registry id when a
+user asks ("Check with the state now", `check_live_status`, `/live-status`). The row goes through the same
+state mapper as the bulk load, so "active" means the same thing in both places. The result is compared
+with our stored name, address and status, and cached per business for 10 minutes. Failures aren't cached,
+and the check never raises: a slow state shows "couldn't reach" instead of an error page. It only reports
+and never writes to our tables; the monthly pull stays the single writer. Iowa's data hub can't look up
+one record, so Iowa businesses show their last-pull date instead.

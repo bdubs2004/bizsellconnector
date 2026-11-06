@@ -87,6 +87,10 @@ class StateSource:
     group_by: str | None = None      # canonical field for long-format files (one row per role)
     group_mapper: Callable[[list["Row"]], list[tuple[str, dict]]] | None = None
     notes: str = ""
+    # Live single-entity lookup (Socrata states). None = the state has no queryable API (Iowa).
+    live_id_field: str | None = None
+    live_id_numeric: bool = False
+    live_status_fields: tuple[str, ...] = ()     # raw columns worth showing, e.g. CO entitystatus
 
 
 class Row:
@@ -234,6 +238,7 @@ CO = StateSource(
         required=("entityid", "entityname", "entitytype", "entitystatus"),
     ),
     mapper=_co,
+    live_id_field="entityid", live_id_numeric=True, live_status_fields=("entitystatus",),
     notes="'Delinquent' (missed periodic report) is kept with status 'delinquent'; dissolved entities are skipped.",
 )
 
@@ -308,6 +313,7 @@ NY = StateSource(
         required=("dos_id", "current_entity_name", "entity_type"),
     ),
     mapper=_ny,
+    live_id_field="dos_id",
     notes="Most entities have no business location on file; the service-of-process address is used instead.",
 )
 
@@ -363,6 +369,7 @@ CT = StateSource(
         required=("accountnumber", "name", "business_type", "status"),
     ),
     mapper=_ct,
+    live_id_field="accountnumber", live_status_fields=("status", "sub_status"),
     notes="Self-reported NAICS codes on about half of records. Email and owner-demographic columns are never loaded.",
 )
 
@@ -437,6 +444,7 @@ OR = StateSource(
     mapper=lambda g: {},   # unused: Oregon is grouped
     group_by="registry_number",
     group_mapper=_or_group,
+    live_id_field="registry_number",
     notes="Long format (one row per business per role). Assumed business names become DBA names on the owner.",
 )
 
@@ -493,6 +501,7 @@ TX = StateSource(
         required=("taxpayer_number", "taxpayer_name", "org_type"),
     ),
     mapper=_tx,
+    live_id_field="taxpayer_number", live_status_fields=("right_to_transact_business_code", "sos_status_code"),
     notes="Address is the franchise-tax mailing address (sometimes an accountant). Lost right to transact = 'delinquent'.",
 )
 
@@ -741,3 +750,56 @@ def fetch(key: str, dest_dir: Path, min_age_years: int | None = None, page_size:
 def header_matches(src: StateSource, header: list[str]) -> bool:
     lookup = {_norm_header(h) for h in header}
     return all(any(_norm_header(a) in lookup for a in src.spec.fields[f]) for f in src.spec.required)
+
+
+# --- live single-entity lookup ------------------------------------------------------------------
+
+def live_lookup(key: str, source_id: str, client: httpx.Client | None = None) -> dict:
+    """Ask the state's API about one entity right now. Uses the same mapper as the bulk load, so the
+    answer is interpreted exactly like the monthly data. Never raises for network trouble: returns
+    {"ok": False, "error": ...} instead, because this runs while a user waits on a page.
+
+    Returns {"ok": True, "found": False} when the state's live list no longer has the entity, and
+    {"ok": True, "found": True, "active": bool, "status": ..., "record": {...}} otherwise."""
+    src = get_source(key)
+    if not src.live_id_field:
+        return {"ok": False, "supported": False,
+                "error": f"{src.state}'s registry has no API for single-business lookups."}
+    sid = str(source_id).strip()
+    if src.live_id_numeric:
+        if not sid.isdigit():
+            return {"ok": False, "supported": True, "error": "Invalid registry id."}
+        where = f"{src.live_id_field} = {sid}"
+    else:
+        where = f"{src.live_id_field} = '{sid.replace(chr(39), chr(39) * 2)}'"
+    own = client is None
+    client = client or httpx.Client(timeout=httpx.Timeout(12, connect=5), headers=_headers())
+    try:
+        r = _get(client, f"https://{src.fetch.domain}/resource/{src.fetch.dataset}.json",
+                 {"$where": where, "$limit": 50}, attempts=2, backoff=0.5)
+        rows = r.json()
+    except (httpx.HTTPError, ValueError) as e:
+        log.warning("live lookup %s %s failed: %s", key, sid, e)
+        return {"ok": False, "supported": True, "error": f"Couldn't reach the {src.state} registry right now."}
+    finally:
+        if own:
+            client.close()
+    if not rows:
+        return {"ok": True, "supported": True, "found": False}
+    cols = {f: aliases[0] for f, aliases in src.spec.fields.items()}
+    raw_status = {f: rows[0].get(f) for f in src.live_status_fields if rows[0].get(f)}
+    try:
+        if src.group_by:
+            mapped = [rec for k, rec in src.group_mapper([Row(x, cols) for x in rows]) if k != "__dba__"]
+            if not mapped:
+                raise Skip("not a business entity")
+            rec = mapped[0]
+        else:
+            rec = src.mapper(Row(rows[0], cols))
+        _, canon = _finish(rec, src, None)
+    except Skip as s:
+        return {"ok": True, "supported": True, "found": True, "active": False, "status": str(s),
+                "raw_status": raw_status, "record": None}
+    return {"ok": True, "supported": True, "found": True, "active": canon["status"] == "active",
+            "status": canon["status"], "raw_status": raw_status,
+            "record": {k: canon.get(k) for k in ("legal_name", "address_line1", "city", "zip5", "status_since")}}

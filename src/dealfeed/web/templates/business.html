@@ -88,6 +88,7 @@
   </div>
 
   <aside class="stack-lg">
+    {% with business_id=b.business_id %}{% include "partials/live_status.html" %}{% endwith %}
     {% with business_id=b.business_id %}{% include "partials/save_form.html" %}{% endwith %}
     <section class="card">
       <h2 class="h-sm">Run the numbers</h2>

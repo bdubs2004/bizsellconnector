@@ -6,7 +6,7 @@ from datetime import date
 
 import psycopg
 
-from . import accounts, business, deal_math, search, targets
+from . import accounts, business, deal_math, live, search, targets
 from .accounts import PlanError, User
 
 
@@ -35,6 +35,11 @@ class Ops:
     def explain_score(self, business_id: str) -> dict:
         out = business.explain_score(self.conn, business_id)
         self._meter("explain_score", 0)
+        return out
+
+    def live_status(self, business_id: str) -> dict:
+        out = live.check_business(self.conn, business_id)
+        self._meter("live_status", 0)
         return out
 
     def sba_deal_math(self, inputs: deal_math.DealInputs) -> dict:

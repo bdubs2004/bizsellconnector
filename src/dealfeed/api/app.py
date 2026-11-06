@@ -103,6 +103,12 @@ def explain_score(business_id: str, ops: Ops = Depends(get_ops)):
     return ops.explain_score(business_id)
 
 
+@app.get("/v1/businesses/{business_id}/live-status", tags=["targets"])
+def live_status(business_id: str, ops: Ops = Depends(get_ops)):
+    """Ask the state registry about this business right now (CO, NY, CT, OR, TX)."""
+    return ops.live_status(business_id)
+
+
 @app.post("/v1/deal-math", tags=["analysis"])
 def deal_math(inputs: DealInputs, ops: Ops = Depends(get_ops)):
     return ops.sba_deal_math(inputs)
