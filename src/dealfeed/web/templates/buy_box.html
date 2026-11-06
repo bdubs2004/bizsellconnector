@@ -2,9 +2,12 @@
 {% block title %}Buy box{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>Your buy box</h1>
-  <p class="muted">What you're looking to buy. Every business gets a buy score measured against this, and search
-    ranks by priority: likely to sell <em>and</em> a fit for you.</p>
+  <div>
+    <p class="eyebrow">Personalizes every buy score</p>
+    <h1>Your buy box</h1>
+    <p>What you're looking to buy. Every business gets a buy score against this, and search ranks by priority:
+      likely to sell <em>and</em> a fit for you.</p>
+  </div>
 </div>
 {% if flash %}<p class="flash" role="status">{{ flash }}</p>{% endif %}
 {% if box.is_default %}
@@ -15,7 +18,7 @@
   <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
 {% endif %}
 
-<form method="post" action="/buy-box" class="card stack buybox-form">
+<form method="post" action="/buy-box" class="stack buybox-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <fieldset>
     <legend>What</legend>
@@ -61,7 +64,7 @@
       <label>Lender DSCR minimum <input type="number" name="min_dscr" min="0" step="0.01" value="{{ box.min_dscr }}" required></label>
     </div>
   </fieldset>
-  <div class="filter-actions">
+  <div class="form-actions">
     <button class="btn" type="submit">Save buy box</button>
     <a class="linkish" href="/search">Back to search</a>
   </div>

@@ -4,14 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Deal Feed{% endblock %} · Deal Feed</title>
+  <link rel="preload" href="/static/fonts/ibm-plex-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/fraunces-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/app.css">
+  <meta name="theme-color" content="#f4f2ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#12110d" media="(prefers-color-scheme: dark)">
   {% block head %}{% endblock %}
   <script src="/static/vendor/htmx-2.0.4.min.js" defer></script>
 </head>
 <body hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
   <header class="topbar">
     <div class="wrap topbar-inner">
-      <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span>Deal Feed</a>
+      <a class="brand" href="/"><svg viewBox="0 0 18 18" aria-hidden="true"><rect x="1" y="10" width="4" height="7" rx="1" fill="currentColor" opacity=".35"/><rect x="7" y="6" width="4" height="11" rx="1" fill="currentColor" opacity=".65"/><rect x="13" y="1" width="4" height="16" rx="1" fill="currentColor"/></svg>Deal Feed</a>
       {% if user %}
       <nav class="nav" aria-label="Main">
         <a href="/search" {% if path.startswith('/search') or path.startswith('/business') %}aria-current="page"{% endif %}>Search</a>
@@ -23,25 +27,23 @@
       <div class="who">
         <a class="plan-chip" href="/connect" title="Plan and usage">{{ user.plan.name }}</a>
         <span class="email">{{ user.email }}</span>
-        <form method="post" action="/logout">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="linkish">Sign out</button></form>
+        <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="linkish">Sign out</button></form>
       </div>
       {% else %}
-      <nav class="nav"><a class="btn btn-sm" href="/login">Sign in</a></nav>
+      <div class="who"><a class="btn btn-sm" href="/login">Sign in</a></div>
       {% endif %}
     </div>
   </header>
   {% if dev_auth %}
-  <div class="devbar">Development mode: sign-in has no password. Don't put this online until real auth is set up.</div>
+  <div class="devbar">Dev mode · sign-in has no password · don't put this online until real auth is set up</div>
   {% endif %}
   <main class="wrap main">
     {% block content %}{% endblock %}
   </main>
   <footer class="wrap foot">
-    Data: public business registries of {{ COVERED_STATES }} (see each business page for the exact source and license)
-    · SBA PPP, 7(a) and 504 FOIA data.
-    Scores are directional estimates, not predictions. Verify before outreach.
-    · <a href="/privacy">Privacy &amp; removal requests</a>
+    <p>Public business registries of {{ COVERED_STATES }}, plus SBA PPP, 7(a) and 504 FOIA data. Each business page
+      names its exact source and license. Scores are directional estimates, not predictions. Verify before outreach.</p>
+    <nav aria-label="Footer"><a href="/privacy">Privacy &amp; removals</a>{% if user %}<a href="/docs">API</a>{% endif %}</nav>
   </footer>
   {% block scripts %}{% endblock %}
 </body>

@@ -1,46 +1,58 @@
 {% extends "base.html" %}
-{% block title %}{{ b.name }}{% endblock %}
+{% block title %}{{ b.name|dname }}{% endblock %}
 {% block content %}
-<p class="crumbs"><a href="/search">← Search</a></p>
+<p class="crumbs"><a href="/search">← Back to search</a></p>
 
 <header class="biz-head">
-  <div class="score-stack">
-    <span class="score score-lg score-{{ b.priority|score_band }}" title="Priority: likely to sell × fit for your buy box">{{ b.priority if b.priority is not none else '–' }}</span>
-    <span class="score-sub">Sell {{ b.score }} · Buy {{ b.buy_score }}</span>
-  </div>
   <div>
-    <h1>{{ b.name }}</h1>
-    <p class="muted">
-      {{ b.industry or 'Industry unclassified' }}{% if b.naics_code %} · NAICS {{ b.naics_code }}{% endif %}
-      {% if b.address.city %} · {{ b.address.city|title }}, {{ b.state }}{% if b.address.county %} ({{ b.address.county|title }} County){% endif %}{% endif %}
-      {% if b.years_in_business is not none %} · {{ b.years_in_business }} years in business{% endif %}
-      · <span class="status status-{{ b.status }}">{{ b.status }}</span>
-    </p>
+    <p class="eyebrow">{{ b.industry or 'Industry unclassified' }}{% if b.naics_code %} · NAICS {{ b.naics_code }}{% endif %}</p>
+    <h1>{{ b.name|dname }}</h1>
+    <div class="biz-meta">
+      <span class="status status-{{ b.status }}">{{ b.status }}</span>
+      {% if b.address.city %}<span>{{ b.address.city|title }}, {{ b.state }}{% if b.address.county %} · {{ b.address.county|title }} County{% endif %}</span>{% endif %}
+      {% if b.years_in_business is not none %}<span>{{ b.years_in_business }} years in business</span>{% endif %}
+      {% if b.entity_type %}<span>{{ b.entity_type }}</span>{% endif %}
+    </div>
+    {% if b.name|dname != b.name %}<p class="legal">Legal name: {{ b.name }}</p>{% endif %}
+  </div>
+  <div class="scoreboard" title="Priority combines both scores, so it's high only when both are">
+    <div class="big">
+      <span class="score score-{{ b.priority|score_band }}">{{ b.priority if b.priority is not none else '–' }}</span>
+      <span class="label">Priority</span>
+    </div>
+    <div class="mini">
+      <div class="top"><span class="label">Likely to sell</span><b>{{ b.score }}</b></div>
+      <div class="track{{ ' hot' if (b.score or 0) >= 70 }}"><i style="width: {{ b.score or 0 }}%"></i></div>
+    </div>
+    <div class="mini">
+      <div class="top"><span class="label">Buy-box fit</span><b>{{ b.buy_score }}</b></div>
+      <div class="track{{ ' hot' if (b.buy_score or 0) >= 70 }}"><i style="width: {{ b.buy_score or 0 }}%"></i></div>
+    </div>
   </div>
 </header>
 
 <div class="biz-layout">
-  <div class="stack-lg">
-    <section class="card">
-      <h2 class="h-sm">Likely to sell: {{ b.score }}</h2>
+  <div>
+    <section class="sect">
+      <div class="sect-head"><h2>Likely to sell: <span class="num">{{ b.score }}</span></h2><span class="label">Starts at 30</span></div>
       <ul class="breakdown">
         {% for s in b.score_breakdown or [] %}
         <li class="{{ 'plus' if s.points > 0 else 'minus' if s.points < 0 else 'zero' }}">
-          <span class="pts">{% if s.points > 0 %}+{% endif %}{{ s.points if s.points != 0 else '·' }}</span>
+          <span class="pts">{% if s.points > 0 %}+{% elif s.points < 0 %}−{% endif %}{{ s.points|abs if s.points != 0 else '—' }}</span>
           <span>{{ s.reason }}</span>
         </li>
         {% endfor %}
       </ul>
-      <p class="note">Every business starts at 30 points. The score is a directional, rules-based estimate.</p>
+      <p class="note">A directional, rules-based estimate. Read the reasons, not just the number.</p>
     </section>
 
-    <section class="card">
-      <h2 class="h-sm">Fit for your buy box: {{ b.buy_score }}</h2>
-      {% if b.buy_box_used.is_default %}<p class="muted small">Using default assumptions. <a href="/buy-box">Set your buy box</a> to personalize this.</p>{% endif %}
+    <section class="sect">
+      <div class="sect-head"><h2>Fit for your buy box: <span class="num">{{ b.buy_score }}</span></h2><span class="label">Starts at 30</span></div>
+      {% if b.buy_box_used.is_default %}<div class="alert alert-info">Using default assumptions. <a href="/buy-box">Set your buy box</a> to score this against what you can actually buy.</div>{% endif %}
       <ul class="breakdown">
         {% for s in b.buy_breakdown or [] %}
         <li class="{{ 'plus' if s.points > 0 else 'minus' if s.points < 0 else 'zero' }}">
-          <span class="pts">{% if s.points > 0 %}+{% endif %}{{ s.points if s.points != 0 else '·' }}</span>
+          <span class="pts">{% if s.points > 0 %}+{% elif s.points < 0 %}−{% endif %}{{ s.points|abs if s.points != 0 else '—' }}</span>
           <span>{{ s.reason }}</span>
         </li>
         {% endfor %}
@@ -48,80 +60,79 @@
       {% set d = b.deal_estimate_detail %}
       {% if d %}
       <dl class="facts deal-facts">
-        <div><dt>Est. price</dt><dd>{{ d.price_range[0]|money }}–{{ d.price_range[1]|money }}</dd></div>
-        <div><dt>Est. SDE</dt><dd>{{ d.sde_range[0]|money }}–{{ d.sde_range[1]|money }}</dd></div>
-        <div><dt>Debt coverage</dt><dd>{{ '%.2f'|format(d.dscr) ~ 'x' if d.dscr is not none else '–' }}</dd></div>
-        <div><dt>Cash to close</dt><dd>{{ d.cash_needed|money }}</dd></div>
+        <div><dt>Est. price</dt><dd class="num">{{ d.price_range[0]|money }}–{{ d.price_range[1]|money }}</dd></div>
+        <div><dt>Est. SDE</dt><dd class="num">{{ d.sde_range[0]|money }}–{{ d.sde_range[1]|money }}</dd></div>
+        <div><dt>Debt coverage</dt><dd class="num">{{ '%.2f'|format(d.dscr) ~ 'x' if d.dscr is not none else '–' }}</dd></div>
+        <div><dt>Cash to close</dt><dd class="num">{{ d.cash_needed|money }}</dd></div>
       </dl>
       <p class="note">{{ d.assumptions }} Rough: industry margins and multiples are placeholder benchmarks.
         <a href="/deal-math?business_id={{ b.business_id }}&purchase_price={{ d.price_mid|int }}&cash_flow={{ d.sde_mid|int }}&interest_rate_pct={{ d.interest_rate_pct }}">Open in deal math</a></p>
       {% endif %}
-      <p class="note">Every buy score starts at 30. Priority combines both scores, so it's high only when both are.</p>
     </section>
 
-    <section class="card">
-      <h2 class="h-sm">Size estimate</h2>
+    <section class="sect">
+      <div class="sect-head"><h2>Size</h2>{% if b.size_estimates %}<span class="label">PPP {{ b.size_estimates[0].as_of[:4] if b.size_estimates[0].as_of else '' }}</span>{% endif %}</div>
       {% if b.size_estimates %}
       {% set se = b.size_estimates[0] %}
       <dl class="facts">
-        {% if se.employees %}<div><dt>Employees</dt><dd>{{ se.employees }}</dd></div>{% endif %}
-        {% if se.annual_payroll %}<div><dt>Annual payroll</dt><dd>{{ se.annual_payroll }}</dd></div>{% endif %}
-        {% if se.revenue_rough %}<div><dt>Revenue (rough)</dt><dd>{{ se.revenue_rough }}</dd></div>{% endif %}
+        {% if se.employees %}<div><dt>Employees</dt><dd class="num">{{ se.employees }}</dd></div>{% endif %}
+        {% if se.annual_payroll %}<div><dt>Annual payroll</dt><dd class="num">{{ se.annual_payroll }}</dd></div>{% endif %}
+        {% if se.revenue_rough %}<div><dt>Revenue (rough)</dt><dd class="num">{{ se.revenue_rough }}</dd></div>{% endif %}
       </dl>
       <p class="note">From {{ se.source }}, loan approved {{ se.as_of }}. Ranges, not exact figures: PPP excluded pay over
         $100k per person, and the data is from 2020–21. Revenue uses a rough industry payroll ratio.</p>
       {% else %}
-      <p class="muted">No PPP loan on record, so no size estimate.</p>
+      <p class="muted">No PPP loan on record, so there's no size estimate. Plenty of good businesses never took one.</p>
       {% endif %}
     </section>
 
-    <section class="card">
-      <h2 class="h-sm">SBA loan history</h2>
+    <section class="sect">
+      <div class="sect-head"><h2>SBA loan history</h2></div>
       {% if b.sba_loans %}
       <div class="table-wrap"><table class="compact">
-        <thead><tr><th>Program</th><th>Approved</th><th>Amount</th><th>Lender</th><th>Jobs</th><th>Business age at loan</th></tr></thead>
+        <thead><tr><th>Program</th><th>Approved</th><th class="num">Amount</th><th>Lender</th><th class="num">Jobs</th><th>Business age</th></tr></thead>
         <tbody>{% for l in b.sba_loans %}
-          <tr><td>{{ {'ppp': 'PPP', '7a': '7(a)', '504': '504'}[l.program] }}</td><td>{{ l.approval_date or '–' }}</td>
-              <td>{{ l.amount|money }}</td><td>{{ l.lender or '–' }}</td><td>{{ l.jobs_reported if l.jobs_reported is not none else '–' }}</td>
+          <tr><td>{{ {'ppp': 'PPP', '7a': '7(a)', '504': '504'}[l.program] }}</td><td class="mono">{{ l.approval_date or '–' }}</td>
+              <td class="num">{{ l.amount|money }}</td><td>{{ l.lender or '–' }}</td><td class="num">{{ l.jobs_reported if l.jobs_reported is not none else '–' }}</td>
               <td>{{ l.business_age_at_loan or '–' }}</td></tr>
         {% endfor %}</tbody>
       </table></div>
       {% else %}<p class="muted">No SBA loans on record.</p>{% endif %}
     </section>
 
-    <section class="card">
-      <h2 class="h-sm">Business details</h2>
+    <section class="sect">
+      <div class="sect-head"><h2>Business details</h2></div>
       <dl class="facts">
-        <div><dt>Address</dt><dd>{{ b.address.line1 or '–' }}<br>{{ b.address.city or '' }}{% if b.address.city %}, {% endif %}{{ b.address.state or '' }} {{ b.address.zip or '' }}
-          <div class="muted small" style="font-weight:400">{{ b.address.kind }}</div></dd></div>
+        <div><dt>Address on filing</dt><dd>{{ b.address.line1|title if b.address.line1 else '–' }}<br>{{ b.address.city|title if b.address.city else '' }}{% if b.address.city %}, {% endif %}{{ b.address.state or '' }} <span class="mono">{{ b.address.zip or '' }}</span>
+          <div class="hint">{{ b.address.kind|replace('_', ' ')|capitalize if b.address.kind else '' }}</div></dd></div>
         <div><dt>Entity type</dt><dd>{{ b.entity_type or '–' }}</dd></div>
-        {% if b.dba_names %}<div><dt>Also does business as</dt><dd>{{ b.dba_names|join(', ') }}</dd></div>{% endif %}
-        <div><dt>Formed</dt><dd>{{ b.formation_date or 'Unknown' }}</dd></div>
-        <div><dt>Industry source</dt><dd>{{ {'ppp': 'PPP loan', 'sba': 'SBA loan', 'rules': 'Name match', 'llm': 'AI guess', 'manual': 'Manual'}.get(b.industry_detail.source, '–') }}{% if b.industry_detail.confidence %} ({{ (b.industry_detail.confidence * 100)|round|int }}% confidence){% endif %}</dd></div>
+        {% if b.dba_names %}<div><dt>Also does business as</dt><dd>{% for n in b.dba_names %}{{ n|dname }}{% if not loop.last %}, {% endif %}{% endfor %}</dd></div>{% endif %}
+        <div><dt>Formed</dt><dd class="num">{{ b.formation_date or 'Unknown' }}</dd></div>
+        <div><dt>Industry source</dt><dd>{{ {'ppp': 'PPP loan', 'sba': 'SBA loan', 'rules': 'Name match', 'llm': 'AI guess', 'manual': 'Manual', 'state': 'State filing'}.get(b.industry_detail.source, '–') }}{% if b.industry_detail.confidence %} <span class="muted">· {{ (b.industry_detail.confidence * 100)|round|int }}%</span>{% endif %}</dd></div>
       </dl>
       {% if b.people_from_public_filings %}
-      <h3 class="h-xs">Named in public filings</h3>
-      <ul class="plain">{% for p in b.people_from_public_filings %}
-        <li>{{ p.name|title }} <span class="muted">· {{ p.role }} · seen {{ p.first_seen }}{% if p.last_seen != p.first_seen %} to {{ p.last_seen }}{% endif %}</span></li>
+      <h3 class="h-xs" style="margin-top: 26px; margin-bottom: 4px">Named in public filings</h3>
+      <ul class="plain people">{% for p in b.people_from_public_filings %}
+        <li><span>{{ p.name|title }}</span> <span class="muted small">{{ p.role|capitalize }} · seen {{ p.first_seen }}{% if p.last_seen != p.first_seen %} to {{ p.last_seen }}{% endif %}</span></li>
       {% endfor %}</ul>
       {% endif %}
     </section>
 
-    <section class="card">
-      <h2 class="h-sm">Sources</h2>
-      <ul class="plain small">{% for s in b.sources %}
-        <li>{{ s.source }} <span class="muted">· record {{ s.record_id }} · pulled {{ s.pulled_at }}{% if s.match_method not in ('spine', None) %} · matched by {{ s.match_method }}{% if s.match_score %} ({{ s.match_score|round|int }}){% endif %}{% endif %}</span></li>
+    <section class="sect">
+      <div class="sect-head"><h2>Sources</h2></div>
+      <ul class="plain sources">{% for s in b.sources %}
+        <li>{{ s.source }} <span class="muted">· record <span class="mono">{{ s.record_id }}</span> · pulled {{ s.pulled_at }}{% if s.match_method not in ('spine', None) %} · matched by {{ s.match_method }}{% if s.match_score %} ({{ s.match_score|round|int }}){% endif %}{% endif %}</span></li>
       {% endfor %}</ul>
     </section>
   </div>
 
-  <aside class="stack-lg">
-    {% with business_id=b.business_id %}{% include "partials/live_status.html" %}{% endwith %}
+  <aside class="side">
     {% with business_id=b.business_id %}{% include "partials/save_form.html" %}{% endwith %}
-    <section class="card">
-      <h2 class="h-sm">Run the numbers</h2>
-      <p class="muted small">Model an SBA 7(a) purchase: debt service, DSCR and the cash you'd need.</p>
-      <a class="btn btn-ghost" href="/deal-math?business_id={{ b.business_id }}">Open deal math</a>
+    {% with business_id=b.business_id %}{% include "partials/live_status.html" %}{% endwith %}
+    <section>
+      <h2>Run the numbers</h2>
+      <p class="muted">Model an SBA 7(a) purchase: debt service, DSCR and the cash you'd need.</p>
+      <a class="btn btn-ghost btn-block" href="/deal-math?business_id={{ b.business_id }}">Open deal math <span class="arrow"></span></a>
     </section>
   </aside>
 </div>

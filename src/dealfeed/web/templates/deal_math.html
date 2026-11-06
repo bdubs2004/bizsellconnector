@@ -9,11 +9,13 @@
 {%- endmacro %}
 {% block content %}
 <div class="page-head">
-  <h1>SBA 7(a) deal math</h1>
-  {% if business_name %}<p class="muted">For {{ business_name }}</p>{% endif %}
+  <div>
+    <p class="eyebrow">{{ ('For ' ~ business_name|dname) if business_name else 'Scenario model' }}</p>
+    <h1>SBA 7(a) deal math</h1>
+  </div>
 </div>
 <div class="deal-layout">
-  <form class="card stack" method="post" action="/deal-math"
+  <form class="stack" method="post" action="/deal-math"
         hx-post="/deal-math" hx-target="#deal-result" hx-swap="innerHTML">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <fieldset>
@@ -64,11 +66,11 @@
       </div>
       {{ num('min_dscr', 'Lender DSCR threshold', '0.01') }}
     </fieldset>
-    <button class="btn" type="submit">Run scenario</button>
+    <div class="form-actions"><button class="btn" type="submit">Run scenario <span class="arrow"></span></button></div>
   </form>
-  <section id="deal-result" aria-live="polite">
+  <section id="deal-result" class="deal-out" aria-live="polite">
     {% if r or errors %}{% include "partials/deal_result.html" %}{% else %}
-    <div class="card empty"><p class="muted">Enter cash flow, price and your quoted interest rate to see debt service, DSCR and the cash you'd need to close.</p></div>
+    <div class="placeholder"><div class="ghost-num">1.25x</div><p>Enter cash flow, price and your quoted rate to see debt service, coverage and the cash you'd need to close.</p></div>
     {% endif %}
   </section>
 </div>

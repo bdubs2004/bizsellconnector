@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
-<div class="narrow card">
+<div class="auth">
   <h1>{{ title }}</h1>
   <p>{{ message }}</p>
   <p><a href="{{ '/search' if user else '/' }}">Back</a>{% if user %} · <a href="/connect">Plan and usage</a>{% endif %}</p>

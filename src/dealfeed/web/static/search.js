@@ -21,9 +21,9 @@
     var bounds = [];
     points.forEach(function (p) {
       var m = L.circleMarker([p.lat, p.lon], {
-        radius: 7, weight: 2,
-        color: p.score >= 75 ? "#0f7b5f" : p.score >= 50 ? "#b7791f" : "#8a8f98",
-        fillOpacity: 0.7
+        radius: 6, weight: 1.5,
+        color: "#fbfaf6", fillColor: p.score >= 70 ? "#d1431a" : p.score >= 50 ? "#48463e" : "#a8a396",
+        fillOpacity: 0.9
       });
       var a = document.createElement("a");
       a.href = "/business/" + p.id;

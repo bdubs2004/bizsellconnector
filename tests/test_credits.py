@@ -99,7 +99,7 @@ def test_web_viewing_is_free_and_export_charges(built):
     r = c.get("/search/export.csv?industry=pest+control")
     assert r.status_code == 200 and accounts.credits(conn, u)["used_this_month"] == len(r.text.strip().splitlines()) - 1
     page = c.get("/connect").text
-    assert "export credits left" in page and "new businesses viewed today" in page
+    assert "export credits left" in page and "New businesses viewed today" in page
 
 
 def test_fair_use_cap_blocks_new_views_not_repeat_ones(built):

@@ -1,47 +1,58 @@
 {% extends "base.html" %}
-{% block title %}Off-market Iowa targets{% endblock %}
+{% block title %}Off-market acquisition targets{% endblock %}
 {% block content %}
 <section class="hero">
-  <p class="eyebrow">For search funds and self-funded searchers</p>
-  <h1>Small businesses that aren't for sale yet but probably will be.</h1>
-  <p class="lede">Established businesses from the public registries of {{ COVERED_STATES }}, matched to SBA loan
-    records, sized from public PPP data, and scored on how likely they are to sell in the next few years.
-    Every score shows its reasons. Search it here or ask Claude to do it for you.</p>
-  <div class="hero-cta">
-    {% if user %}
-    <a class="btn" href="/search">Search targets</a>
-    <a class="btn btn-ghost" href="/connect">Connect your AI</a>
-    {% else %}
-    <a class="btn" href="/login">Get started</a>
-    <a class="btn btn-ghost" href="#sample">See a free sample</a>
-    {% endif %}
+  <div>
+    <p class="eyebrow">For search funds and self-funded searchers</p>
+    <h1>The businesses that aren't for sale <em>yet.</em></h1>
+  </div>
+  <div>
+    <p class="lede">Every established company in {{ STATE_NAMES|length }} state registries, matched to SBA loan records,
+      sized from PPP data and scored on how likely the owner is to sell in the next few years. Every score
+      shows its reasons. Search it here, or ask Claude to do it for you.</p>
+    <div class="hero-cta">
+      {% if user %}
+      <a class="btn" href="/search">Search targets <span class="arrow"></span></a>
+      <a class="btn btn-ghost" href="/connect">Connect your AI</a>
+      {% else %}
+      <a class="btn" href="/login">Get started <span class="arrow"></span></a>
+      <a class="btn btn-ghost" href="#sample">See a free sample</a>
+      {% endif %}
+    </div>
+    <div class="hero-stats">
+      <div><b>{{ total_businesses|compact }}</b><span>businesses scored</span></div>
+      <div><b>{{ STATE_NAMES|length }}</b><span>states: {{ STATE_NAMES.keys()|join(' ') }}</span></div>
+      <div><b>0</b><span>listed for sale</span></div>
+    </div>
   </div>
 </section>
 
 <section id="sample">
-  <h2 class="section-title">Free sample: top-scored targets, 10+ years in business</h2>
+  <div class="section-head">
+    <h2 class="section-title">This month's sample</h2>
+    <span class="label">Top priority · 10+ years in business</span>
+  </div>
   <div class="sample-grid">
     {% for s in samples %}
-    <article class="card sample">
+    <article class="sample">
       <header class="sample-head">
         <h3>{{ s.industry.label }}</h3>
-        <span class="muted">{{ s.total }} match{{ '' if s.total == 1 else 'es' }}</span>
+        <span class="label">{{ '{:,}'.format(s.total) }} match{{ '' if s.total == 1 else 'es' }}</span>
       </header>
       {% if s.targets %}
       <ol class="sample-list">
         {% for t in s.targets %}
         <li>
-          <span class="score score-{{ t.priority|score_band }}" title="Priority: likely to sell × worth buying (sell {{ t.score }}, buy {{ t.buy_score }})">{{ t.priority }}</span>
           <div>
-            <a class="strong" href="/business/{{ t.business_id }}">{{ t.name }}</a>
-            <div class="muted small">{{ t.city|title if t.city else '' }}{% if t.state %}, {{ t.state }}{% endif %}{% if t.years_in_business %} · {{ t.years_in_business }} yrs{% endif %}{% if t.size_estimate and t.size_estimate.employees %} · ~{{ t.size_estimate.employees }} employees{% endif %}</div>
-            {% if t.top_reasons %}<div class="small reason">{{ t.top_reasons[0] }}</div>{% endif %}
+            <a href="/business/{{ t.business_id }}">{{ t.name|dname }}</a>
+            <div class="reason">{{ t.city|title if t.city else '' }}{% if t.state %}, {{ t.state }}{% endif %}{% if t.years_in_business %} · {{ t.years_in_business }} yrs{% endif %}{% if t.size_estimate and t.size_estimate.employees %} · ~{{ t.size_estimate.employees }} employees{% endif %}</div>
           </div>
+          <span class="score score-{{ t.priority|score_band }}" title="Priority: likely to sell × worth buying (sell {{ t.score }}, buy {{ t.buy_score }})">{{ t.priority }}</span>
         </li>
         {% endfor %}
       </ol>
       {% else %}
-      <p class="muted">No strong matches in the current data yet.</p>
+      <p class="muted small">No strong matches in the current data yet.</p>
       {% endif %}
     </article>
     {% endfor %}
@@ -49,12 +60,22 @@
 </section>
 
 <section class="how">
-  <h2 class="section-title">How the score works</h2>
+  <div class="section-head">
+    <h2 class="section-title">What goes into a score</h2>
+    <span class="label">Rules you can read, not a black box</span>
+  </div>
   <div class="how-grid">
-    <div><h3>Age</h3><p>Businesses filed 20 to 30+ years ago are more likely to have owners heading toward retirement.</p></div>
-    <div><h3>Owner-run signals</h3><p>An individual registered agent, rather than a filing service, suggests the founder still runs it.</p></div>
-    <div><h3>Fit for SBA buyers</h3><p>PPP-based size estimates show whether the business is big enough to carry SBA debt.</p></div>
-    <div><h3>Already sold?</h3><p>A recent SBA 7(a) loan marked "Change of Ownership" means someone just bought it, so it ranks lower.</p></div>
+    <div><span class="step">01 / Age</span><h3>Owners near retirement</h3><p>Businesses filed 20 to 30+ years ago are more likely to have a founder thinking about the exit.</p></div>
+    <div><span class="step">02 / Control</span><h3>Still owner-run</h3><p>An individual registered agent, rather than a filing service, suggests the founder still runs it.</p></div>
+    <div><span class="step">03 / Size</span><h3>Bankable with SBA debt</h3><p>PPP-based size estimates show whether the business can carry an SBA 7(a) loan.</p></div>
+    <div><span class="step">04 / Recency</span><h3>Not already sold</h3><p>A recent 7(a) loan marked "change of ownership" means someone just bought it, so it ranks lower.</p></div>
   </div>
 </section>
+
+{% if not user %}
+<section class="cta-band">
+  <p>Find the owner before the broker does.</p>
+  <a class="btn btn-signal" href="/login">Start searching <span class="arrow"></span></a>
+</section>
+{% endif %}
 {% endblock %}

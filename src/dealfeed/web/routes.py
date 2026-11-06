@@ -7,7 +7,6 @@ limits and metering match the API and MCP server.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import date
 from pathlib import Path
@@ -34,6 +33,7 @@ from ..services.search import COUNT_CAP, SearchParams, search_rows, target_summa
 from ..states_meta import STATE_NAMES, covered_states_text
 from ..services.targets import STATUSES
 from . import auth
+from .format import display_name, script_json
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
@@ -68,14 +68,25 @@ def _money(v) -> str:
     return f"${v:,.0f}"
 
 
+def _compact(n) -> str:
+    n = int(n or 0)
+    if n >= 1_000_000:
+        return f"{n / 1e6:.1f}M"
+    if n >= 10_000:
+        return f"{n / 1e3:.0f}k"
+    return f"{n:,}"
+
+
 def _score_band(score) -> str:
     if score is None:
         return "none"
-    return "high" if score >= 75 else "mid" if score >= 50 else "low"
+    return "high" if score >= 70 else "mid" if score >= 50 else "low"
 
 
 templates.env.filters["money"] = _money
 templates.env.filters["score_band"] = _score_band
+templates.env.filters["dname"] = display_name
+templates.env.filters["compact"] = _compact
 templates.env.globals["STATUSES"] = STATUSES
 templates.env.globals["INDUSTRIES"] = INDUSTRIES
 templates.env.globals["STATE_NAMES"] = STATE_NAMES
@@ -132,7 +143,11 @@ def index(request: Request, conn=Depends(db.request_conn), user=Depends(get_user
         rows, total, _ = search_rows(conn, SearchParams(industry=ind.slug, min_years_in_business=10, min_score=50),
                                      limit=3)
         samples.append({"industry": ind, "total": total, "targets": [target_summary(r, today) for r in rows]})
-    return render(request, "index.html", user, samples=samples)
+    # Planner estimate is instant at any size; fall back to an exact count on small (e.g. demo) databases.
+    n = conn.execute("SELECT reltuples::bigint AS n FROM pg_class WHERE relname = 'businesses'").fetchone()["n"]
+    if n is None or n < 10_000:
+        n = conn.execute("SELECT count(*) AS n FROM businesses WHERE NOT suppressed").fetchone()["n"]
+    return render(request, "index.html", user, samples=samples, total_businesses=n)
 
 
 @router.get("/privacy", response_class=HTMLResponse)
@@ -214,9 +229,9 @@ def search_page(request: Request, conn=Depends(db.request_conn), user: User = De
                prev_qs=urlencode(qs | {"page": page - 1}) if page > 1 else None,
                next_qs=urlencode(qs | {"page": page + 1}) if result["next_offset"] is not None else None,
                export_qs=urlencode(qs),
-               # "<" escaped so a business name can't close the <script> tag the JSON sits in
-               points=json.dumps([{"id": t["business_id"], "name": t["name"], "score": t["score"], **t["location"]}
-                                  for t in result["results"] if t["location"]]).replace("<", "\\u003c"))
+               # escaped so a business name can't close the <script> tag the JSON sits in
+               points=script_json([{"id": t["business_id"], "name": display_name(t["name"]), "score": t["priority"],
+                                    **t["location"]} for t in result["results"] if t["location"]]))
     if is_htmx(request) and request.headers.get("HX-Target") == "results":
         return render(request, "partials/results.html", user, **ctx)
     return render(request, "search.html", user, **ctx)

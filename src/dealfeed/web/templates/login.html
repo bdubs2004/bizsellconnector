@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Sign in{% endblock %}
 {% block content %}
-<div class="narrow card">
+<div class="auth">
+  <p class="eyebrow">Deal Feed</p>
   <h1>Sign in</h1>
   {% if dev_auth %}
   <p class="muted">Development sign-in: enter any email. New emails get an account on the
@@ -14,7 +15,7 @@
     <label>Email
       <input type="email" name="email" required autocomplete="email" autofocus value="{{ email or '' }}">
     </label>
-    <button class="btn" type="submit">Continue</button>
+    <button class="btn btn-block" type="submit">Continue <span class="arrow"></span></button>
   </form>
 </div>
 {% endblock %}

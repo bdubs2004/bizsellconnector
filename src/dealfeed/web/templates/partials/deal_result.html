@@ -5,16 +5,17 @@
 </div>
 {% elif r %}
 {% set band = 'none' if r.dscr is none else ('good' if r.dscr >= r.min_dscr + 0.25 else 'ok' if r.dscr >= r.min_dscr else 'tight' if r.dscr >= 1 else 'bad') %}
-<div class="card">
+<div>
   <div class="verdict verdict-{{ band }}">{{ r.verdict }}</div>
   <div class="metrics">
-    <div><span class="m-label">DSCR</span><span class="m-value">{{ '%.2f'|format(r.dscr) ~ 'x' if r.dscr is not none else '–' }}</span><span class="m-sub">lender wants {{ '%.2f'|format(r.min_dscr) }}x</span></div>
+    <div class="{{ 'lead' if band == 'good' else '' }}"><span class="m-label">DSCR</span><span class="m-value">{{ '%.2f'|format(r.dscr) ~ 'x' if r.dscr is not none else '–' }}</span><span class="m-sub">lender wants {{ '%.2f'|format(r.min_dscr) }}x</span></div>
     <div><span class="m-label">Annual debt service</span><span class="m-value">{{ r.total_annual_debt_service|money }}</span><span class="m-sub">{{ r.sba_loan.monthly_payment|money }}/mo SBA</span></div>
     <div><span class="m-label">Cash flow after debt</span><span class="m-value">{{ r.cash_flow_after_debt_service|money }}</span><span class="m-sub">after {{ r.buyer_salary_assumed|money }} salary</span></div>
     <div><span class="m-label">Cash you need</span><span class="m-value">{{ r.buyer_cash_needed.total|money }}</span><span class="m-sub">equity + closing{% if r.buyer_cash_needed.working_capital %} + WC{% endif %}</span></div>
     <div><span class="m-label">Purchase multiple</span><span class="m-value">{{ r.purchase_multiple }}x</span><span class="m-sub">{{ r.inputs.cash_flow_type|upper }}</span></div>
     <div><span class="m-label">Payback</span><span class="m-value">{{ (r.payback_years ~ ' yrs') if r.payback_years is not none else '–' }}</span><span class="m-sub">on cash invested</span></div>
   </div>
+  <div class="funds">
   <h3 class="h-xs">Sources of funds</h3>
   <table class="compact">
     <tr><td>SBA 7(a) loan</td><td class="num">{{ r.sources_of_funds.sba_loan|money }}</td></tr>
@@ -22,6 +23,7 @@
     <tr><td>Your equity</td><td class="num">{{ r.sources_of_funds.buyer_equity|money }}</td></tr>
     <tr><td>Closing costs (cash)</td><td class="num">{{ r.buyer_cash_needed.closing_costs|money }}</td></tr>
   </table>
+  </div>
   <ul class="note-list">{% for a in r.assumptions %}<li>{{ a }}</li>{% endfor %}</ul>
 </div>
 {% endif %}

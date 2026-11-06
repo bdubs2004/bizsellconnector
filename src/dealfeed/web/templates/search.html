@@ -3,68 +3,74 @@
 {% block head %}<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">{% endblock %}
 {% block content %}
 <div class="search-layout">
-  <aside class="filters card">
+  <aside class="filters">
     <form id="filters" method="get" action="/search"
           hx-get="/search" hx-target="#results" hx-push-url="true"
-          hx-trigger="submit, change from:select" hx-indicator="#results">
+          hx-trigger="submit, change from:select, change from:input[type=checkbox]" hx-indicator="#results">
       <details class="filter-details" open>
-      <summary class="h-sm">Filters</summary>
+      <summary><span class="label">Filters</span></summary>
       <div class="filter-body">
-      <label>Rank by
-        <select name="sort">
-          <option value="priority" {% if form.sort == 'priority' %}selected{% endif %}>Priority (sell × buy)</option>
-          <option value="sell" {% if form.sort == 'sell' %}selected{% endif %}>Likely to sell</option>
-          <option value="buy" {% if form.sort == 'buy' %}selected{% endif %}>Fit for my buy box</option>
-        </select>
-      </label>
-      <label class="check"><input type="checkbox" name="in_box" {% if form.in_box %}checked{% endif %}>
-        Only my buy box <a class="small" href="/buy-box">(edit)</a></label>
-      <label>Industry
-        <select name="industry">
-          <option value="">Any industry</option>
-          {% for ind in INDUSTRIES %}
-          <option value="{{ ind.slug }}" {% if form.industry == ind.slug %}selected{% endif %}>{{ ind.label }}{% if not ind.v1 %} (beta){% endif %}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>State
-        <select name="state">
-          <option value="">All states</option>
-          {% for code, name in STATE_NAMES.items() %}
-          <option value="{{ code }}" {% if form.state == code %}selected{% endif %}>{{ name }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Counties <span class="hint">comma-separated</span>
-        <input name="counties" value="{{ form.counties }}" placeholder="Polk, Story">
-      </label>
-      <label>City <input name="city" value="{{ form.city }}" placeholder="Des Moines"></label>
-      <label>Name contains <input name="name" value="{{ form.name }}"></label>
-      <label>Min. years in business
-        <select name="min_years">
-          {% for v in ['', '10', '15', '20', '25', '30'] %}
-          <option value="{{ v }}" {% if form.min_years == v %}selected{% endif %}>{{ v + '+' if v else 'Any' }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <fieldset class="range">
-        <legend class="label-like">Est. employees</legend>
-        <div class="row2 tight">
-          <input name="min_employees" type="number" min="0" placeholder="Min" aria-label="Minimum employees" value="{{ form.min_employees }}">
-          <input name="max_employees" type="number" min="0" placeholder="Max" aria-label="Maximum employees" value="{{ form.max_employees }}">
-        </div>
-      </fieldset>
-      <label class="check"><input type="checkbox" name="sized_only" {% if form.sized_only %}checked{% endif %}>
-        Only businesses with a size estimate</label>
-      <label>Min. score
-        <select name="min_score">
-          {% for v in ['', '40', '50', '60', '70', '80'] %}
-          <option value="{{ v }}" {% if form.min_score == v %}selected{% endif %}>{{ v + '+' if v else 'Any' }}</option>
-          {% endfor %}
-        </select>
-      </label>
+      <div class="filter-group">
+        <label>Rank by
+          <select name="sort">
+            <option value="priority" {% if form.sort == 'priority' %}selected{% endif %}>Priority (sell × buy)</option>
+            <option value="sell" {% if form.sort == 'sell' %}selected{% endif %}>Likely to sell</option>
+            <option value="buy" {% if form.sort == 'buy' %}selected{% endif %}>Fit for my buy box</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" name="in_box" {% if form.in_box %}checked{% endif %}>
+          <span>Only my buy box <a class="muted" href="/buy-box">edit</a></span></label>
+      </div>
+      <div class="filter-group">
+        <label>Industry
+          <select name="industry">
+            <option value="">Any industry</option>
+            {% for ind in INDUSTRIES %}
+            <option value="{{ ind.slug }}" {% if form.industry == ind.slug %}selected{% endif %}>{{ ind.label }}{% if not ind.v1 %} (beta){% endif %}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>State
+          <select name="state">
+            <option value="">All states</option>
+            {% for code, name in STATE_NAMES.items() %}
+            <option value="{{ code }}" {% if form.state == code %}selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Counties <span class="hint">comma-separated</span>
+          <input name="counties" value="{{ form.counties }}" placeholder="Polk, Story">
+        </label>
+        <label>City <input name="city" value="{{ form.city }}" placeholder="Des Moines"></label>
+        <label>Name contains <input name="name" value="{{ form.name }}" placeholder="e.g. termite"></label>
+      </div>
+      <div class="filter-group">
+        <label>Years in business
+          <select name="min_years">
+            {% for v in ['', '10', '15', '20', '25', '30'] %}
+            <option value="{{ v }}" {% if form.min_years == v %}selected{% endif %}>{{ v + '+' if v else 'Any' }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <fieldset class="range">
+          <span class="label-text" id="emp-label">Est. employees</span>
+          <div class="row2 tight" role="group" aria-labelledby="emp-label">
+            <input name="min_employees" type="number" min="0" placeholder="Min" aria-label="Minimum employees" value="{{ form.min_employees }}">
+            <input name="max_employees" type="number" min="0" placeholder="Max" aria-label="Maximum employees" value="{{ form.max_employees }}">
+          </div>
+        </fieldset>
+        <label class="check"><input type="checkbox" name="sized_only" {% if form.sized_only %}checked{% endif %}>
+          Only with a size estimate</label>
+        <label>Min. sell score
+          <select name="min_score">
+            {% for v in ['', '40', '50', '60', '70', '80'] %}
+            <option value="{{ v }}" {% if form.min_score == v %}selected{% endif %}>{{ v + '+' if v else 'Any' }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
       <div class="filter-actions">
-        <button class="btn" type="submit">Search</button>
+        <button class="btn" type="submit">Apply</button>
         <a class="linkish" href="/search">Reset</a>
       </div>
       </div>
@@ -73,7 +79,7 @@
   </aside>
 
   <section class="results-col">
-    <div id="map" class="map card" hidden></div>
+    <div id="map" class="map" hidden></div>
     <div id="results">
       {% include "partials/results.html" %}
     </div>

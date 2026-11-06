@@ -1,14 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Connect your AI{% endblock %}
 {% block content %}
-<div class="page-head"><h1>Connect your AI</h1></div>
+<div class="page-head">
+  <div>
+    <p class="eyebrow">MCP · REST API</p>
+    <h1>Connect your AI</h1>
+    <p>Give Claude your Deal Feed account and ask in plain English. Searching and viewing in chat are free.</p>
+  </div>
+</div>
 
 <div class="connect-layout">
-  <div class="stack-lg">
+  <div>
     {% if new_key %}
-    <section class="card key-reveal" role="status">
-      <h2 class="h-sm">Your new API key</h2>
-      <p>Copy it now. For security it's only shown once.</p>
+    <section class="key-reveal" role="status">
+      <h2 class="strong">Your new API key</h2>
+      <p class="small">Copy it now. For security it's only shown once.</p>
       <div class="copy-row"><code id="new-key">{{ new_key }}</code>
         <button class="btn btn-sm" type="button" data-copy="new-key">Copy</button></div>
     </section>
@@ -18,19 +24,26 @@
     {% with kind="warn", message="Your " ~ user.plan.name ~ " plan doesn't include AI-assistant (MCP) access. API keys still work for the REST API." %}{% include "partials/alert.html" %}{% endwith %}
     {% endif %}
 
-    <section class="card">
-      <h2 class="h-sm">Claude Code</h2>
-      <p class="muted small">Adds Deal Feed as a remote MCP server. Replace the key with one of yours.</p>
-      <pre class="code" id="cc">claude mcp add --transport http dealfeed {{ mcp_url }} \
+    <div class="steps">
+      <section class="step-block">
+        <div>
+          <h2>Claude Code</h2>
+          <p class="muted">Adds Deal Feed as a remote MCP server. Create a key on the right, then run:</p>
+          <div class="code-wrap">
+            <pre class="code" id="cc">claude mcp add --transport http dealfeed {{ mcp_url }} \
   --header "Authorization: Bearer {{ new_key or 'dfk_your_key_here' }}"</pre>
-      <button class="btn btn-ghost btn-sm" type="button" data-copy="cc">Copy</button>
-    </section>
+            <button class="btn btn-sm" type="button" data-copy="cc">Copy</button>
+          </div>
+        </div>
+      </section>
 
-    <section class="card">
-      <h2 class="h-sm">Claude Desktop (runs on your computer)</h2>
-      <p class="muted small">Add to <code>claude_desktop_config.json</code>. This runs the server locally against your own database,
-        so it's for your own use, not for customers.</p>
-      <pre class="code" id="cd">{
+      <section class="step-block">
+        <div>
+          <h2>Claude Desktop <span class="tag">Runs locally</span></h2>
+          <p class="muted">Add to <code>claude_desktop_config.json</code>. This runs the server on your computer against your own
+            database, so it's for your own use, not for customers.</p>
+          <div class="code-wrap">
+            <pre class="code" id="cd">{
   "mcpServers": {
     "dealfeed": {
       "command": "/path/to/.venv/bin/dealfeed",
@@ -42,58 +55,69 @@
     }
   }
 }</pre>
-      <button class="btn btn-ghost btn-sm" type="button" data-copy="cd">Copy</button>
-    </section>
+            <button class="btn btn-sm" type="button" data-copy="cd">Copy</button>
+          </div>
+        </div>
+      </section>
 
-    <section class="card">
-      <h2 class="h-sm">claude.ai and ChatGPT connectors</h2>
-      <p class="muted">These need a sign-in flow (OAuth) that isn't built yet. It's coming with the real login system.</p>
-    </section>
-
-    <section class="card">
-      <h2 class="h-sm">REST API</h2>
-      <pre class="code" id="rest">curl -X POST {{ request.base_url }}v1/targets/search \
+      <section class="step-block">
+        <div>
+          <h2>REST API</h2>
+          <p class="muted">For your own scripts and CRM. Results cost 1 credit per business, once a month.</p>
+          <div class="code-wrap">
+            <pre class="code" id="rest">curl -X POST {{ request.base_url }}v1/targets/search \
   -H "Authorization: Bearer {{ new_key or 'dfk_your_key_here' }}" \
   -H "Content-Type: application/json" \
   -d '{"industry": "pest control", "min_years_in_business": 20}'</pre>
-      <button class="btn btn-ghost btn-sm" type="button" data-copy="rest">Copy</button>
-      <p class="small"><a href="/docs">Full API reference</a></p>
-    </section>
+            <button class="btn btn-sm" type="button" data-copy="rest">Copy</button>
+          </div>
+          <p class="small" style="margin-top: 12px"><a href="/docs">Full API reference</a></p>
+        </div>
+      </section>
 
-    <section class="card">
-      <h2 class="h-sm">Try asking</h2>
-      <ul class="plain">
-        <li>"Find pest control companies in Iowa that have been around 20+ years and rank them."</li>
-        <li>"Give me a market summary for janitorial companies in Iowa."</li>
-        <li>"Run SBA math on the top one at 3x SDE, assuming $350k SDE and a 10.5% rate."</li>
-        <li>"Save the top three to my pipeline as researching."</li>
+      <section class="step-block">
+        <div>
+          <h2>claude.ai and ChatGPT <span class="tag">Coming soon</span></h2>
+          <p class="muted">These need a sign-in flow (OAuth) that ships with the real login system.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="sect" style="margin-top: 20px; border-top: 1px solid var(--ink)">
+      <div class="sect-head"><h2>Then try asking</h2></div>
+      <ul class="plain asks">
+        <li>Find pest control companies in Iowa that have been around 20+ years and rank them.</li>
+        <li>Give me a market summary for janitorial companies in Colorado.</li>
+        <li>Run SBA math on the top one at 3x SDE, assuming $350k SDE and a 10.5% rate.</li>
+        <li>Save the top three to my pipeline as researching.</li>
       </ul>
     </section>
   </div>
 
-  <aside class="stack-lg">
-    <section class="card">
-      <h2 class="h-sm">Plan and usage</h2>
-      <p><span class="plan-chip">{{ usage.plan }}</span></p>
+  <aside class="side">
+    <section>
+      <div class="sect-head" style="margin-bottom: 0"><span class="label">Export credits</span><a class="plan-chip" href="/connect">{{ usage.plan }}</a></div>
       {% set c = usage.credits %}
-      {% if c.monthly_allowance or c.topup_left %}
       {% set total = c.monthly_allowance + c.topup_left %}
-      {% set pct = [100, ((total - c.left) / total * 100)|round|int]|min if total else 100 %}
+      <p class="credits-big">{{ '{:,}'.format(c.left) }}<small>export credits left</small></p>
+      {% if total %}
+      {% set pct = [100, ((total - c.left) / total * 100)|round|int]|min %}
       <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="{{ total }}" aria-valuenow="{{ total - c.left }}" aria-label="Export credits used">
         <span style="width: {{ pct }}%"></span>
       </div>
-      <p class="small"><strong>{{ c.left }}</strong> export credits left{% if c.topup_left %} ({{ c.topup_left }} from top-ups){% endif %}. {{ c.monthly_allowance }} included each month.</p>
       {% endif %}
-      <p class="small">Searching and viewing are free: {{ usage.views_today }} of {{ usage.views_per_day }} new businesses viewed today (fair use).</p>
-      <p class="hint">Credits are used only when data leaves Deal Feed: 1 per business in a CSV export or REST API response, once a month. Re-exporting the same business that month is free.</p>
-      <ul class="plain small">
-        <li>Up to {{ usage.max_rows_per_call }} results per search</li>
-        <li>AI assistant (MCP): {{ 'included' if usage.mcp_enabled else 'not included' }}</li>
-        <li>CSV exports: {{ 'included' if usage.exports_enabled else 'not included' }}</li>
+      <p class="hint">{{ '{:,}'.format(c.monthly_allowance) }} included each month{% if c.topup_left %}, plus {{ '{:,}'.format(c.topup_left) }} from top-ups{% endif %}.
+        Credits are used only when data leaves Deal Feed: 1 per business in a CSV export or REST API response, once a month.</p>
+      <ul class="kv">
+        <li><span>Searching and viewing</span><b>Free</b></li>
+        <li><span>New businesses viewed today</span><b>{{ usage.views_today }} / {{ '{:,}'.format(usage.views_per_day) }}</b></li>
+        <li><span>Results per search</span><b>{{ usage.max_rows_per_call }}</b></li>
+        <li><span>AI assistant (MCP)</span><b>{{ 'Yes' if usage.mcp_enabled else 'No' }}</b></li>
+        <li><span>CSV exports</span><b>{{ 'Yes' if usage.exports_enabled else 'No' }}</b></li>
       </ul>
       {% if dev_auth %}
-      <form method="post" action="/connect/plan" class="stack dev-only">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <form method="post" action="/connect/plan" class="dev-only">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>Switch plan <span class="hint">dev only, until billing exists</span>
           <select name="plan" data-autosubmit>
             {% for name in plans %}<option value="{{ name }}" {% if name == usage.plan %}selected{% endif %}>{{ name }}</option>{% endfor %}
@@ -104,28 +128,28 @@
       {% endif %}
     </section>
 
-    <section class="card">
-      <h2 class="h-sm">API keys</h2>
+    <section>
+      <h2>API keys</h2>
+      <p class="muted">One per app. Only a hash is stored; revoke anytime.</p>
       <form method="post" action="/connect/keys" class="inline-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input name="label" placeholder="Label, e.g. Claude Code" maxlength="60" aria-label="Key label">
-        <button class="btn btn-sm" type="submit">Create key</button>
+        <button class="btn" type="submit">Create</button>
       </form>
       {% if keys %}
       <ul class="keys">
         {% for k in keys %}
         <li class="{{ 'revoked' if k.revoked_at }}">
           <code>{{ k.key_prefix }}…</code>
-          <span class="muted small">{{ k.label or 'No label' }} · {{ k.created_at.date() }}{% if k.revoked_at %} · revoked{% endif %}</span>
+          <span class="muted">{{ k.label or 'No label' }} · {{ k.created_at.date() }}{% if k.revoked_at %} · revoked{% endif %}</span>
           {% if not k.revoked_at %}
-          <form method="post" action="/connect/keys/{{ k.id }}/revoke">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="linkish danger" type="submit">Revoke</button></form>
+          <form method="post" action="/connect/keys/{{ k.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="linkish danger" type="submit">Revoke</button></form>
           {% endif %}
         </li>
         {% endfor %}
       </ul>
       {% else %}
-      <p class="muted small">No keys yet.</p>
+      <p class="hint" style="margin-top: 12px">No keys yet.</p>
       {% endif %}
     </section>
   </aside>

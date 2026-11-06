@@ -1,28 +1,29 @@
 <tr id="row-{{ t.business_id }}" {% if flash %}class="just-saved"{% endif %}>
-  <td>{% include "partials/scores.html" %}</td>
-  <td>
-    <a class="strong" href="/business/{{ t.business_id }}">{{ t.name }}</a>
-    <div class="muted small">{{ t.industry or 'Unclassified' }}{% if t.years_in_business is not none %} · {{ t.years_in_business }} yrs{% endif %}</div>
+  <td class="c-score">{% include "partials/scores.html" %}</td>
+  <td class="c-biz">
+    <a class="t-name" href="/business/{{ t.business_id }}">{{ t.name|dname }}</a>
+    <div class="sub">{{ t.industry or 'Unclassified' }}{% if t.years_in_business is not none %} · {{ t.years_in_business }} yrs{% endif %}</div>
   </td>
-  <td>{{ t.city|title if t.city else '–' }}{% if t.state %}, {{ t.state }}{% endif %}{% if t.county %}<div class="muted small">{{ t.county|title }} County</div>{% endif %}</td>
-  <td>
+  <td class="c-meta">{{ t.city|title if t.city else '' }}{% if t.state %}, {{ t.state }}{% endif %}</td>
+  <td class="c-loc">{{ t.city|title if t.city else '–' }}{% if t.state %}, {{ t.state }}{% endif %}{% if t.county %}<div class="sub">{{ t.county|title }} County</div>{% endif %}</td>
+  <td class="c-status">
     <form method="post" action="/pipeline/{{ t.business_id }}" class="row-form"
           hx-post="/pipeline/{{ t.business_id }}" hx-target="closest tr" hx-swap="outerHTML" hx-trigger="change, submit">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <select name="status" aria-label="Status for {{ t.name }}">
+      <select name="status" aria-label="Status for {{ t.name|dname }}">
         {% for s in STATUSES %}<option value="{{ s }}" {% if t.pipeline_status == s %}selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
       </select>
-      <input name="notes" value="{{ t.notes or '' }}" placeholder="Add a note" aria-label="Notes for {{ t.name }}">
+      <input name="notes" value="{{ t.notes or '' }}" placeholder="Add a note" aria-label="Notes for {{ t.name|dname }}">
       <button class="btn btn-ghost btn-sm noscript-only" type="submit">Save</button>
     </form>
-    <div class="muted small">Updated {{ t.updated_at[:10] }}{% if flash %} · <span class="flash-inline">Saved</span>{% endif %}</div>
+    <div class="hint" style="margin-top: 6px">Updated {{ t.updated_at[:10] }}{% if flash %} · <span class="flash-inline">Saved</span>{% endif %}</div>
   </td>
-  <td>
+  <td class="c-remove">
     <form method="post" action="/business/{{ t.business_id }}/remove"
           hx-post="/business/{{ t.business_id }}/remove" hx-target="closest tr" hx-swap="outerHTML"
-          hx-confirm="Remove {{ t.name }} from your pipeline?">
+          hx-confirm="Remove {{ t.name|dname }} from your pipeline?">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button class="linkish danger" type="submit" aria-label="Remove {{ t.name }}">Remove</button>
+      <button class="linkish danger" type="submit" aria-label="Remove {{ t.name|dname }}">Remove</button>
     </form>
   </td>
 </tr>
