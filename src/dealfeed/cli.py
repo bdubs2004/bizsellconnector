@@ -1,0 +1,211 @@
+"""Command line: `dealfeed <command>`. Run `dealfeed -h` for the list."""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+from . import db, geocode, match, pipeline
+from .config import get_settings
+from .ingest import common, ia_sos, sba
+from .services import accounts
+from .services.search import SearchParams
+from .services.targets import export_targets
+
+FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
+
+
+def _print(obj) -> None:
+    print(json.dumps(obj, indent=2, default=str))
+
+
+def _stash(path: Path, source: str) -> Path:
+    return common.stash_raw_file(path, source, get_settings().raw_dir, date.today())
+
+
+def cmd_migrate(a, conn):
+    _print({"applied": db.migrate(conn)})
+
+
+def cmd_ingest(a, conn):
+    states = [s.strip().upper() for s in a.states.split(",")]
+    if a.source == "ia-sos":
+        path = Path(a.file) if a.file else None
+        if a.download:
+            dest = get_settings().raw_dir / "ia_sos" / date.today().isoformat() / "active_iowa_business_entities.csv"
+            print(f"Downloading {ia_sos.DOWNLOAD_URL} -> {dest}", file=sys.stderr)
+            path = common.download(ia_sos.DOWNLOAD_URL, dest)
+        elif path:
+            path = _stash(path, "ia_sos")
+        else:
+            sys.exit("--file or --download required")
+        _print(ia_sos.load(conn, path))
+    elif a.source == "ppp":
+        for f in a.file_list:
+            _print(sba.load_ppp(conn, _stash(Path(f), "ppp"), states))
+    elif a.source in ("7a", "504"):
+        for f in a.file_list:
+            _print(sba.load_sba(conn, _stash(Path(f), f"sba_{a.source}"), a.source, states))
+
+
+def cmd_inspect(a, conn):
+    p = Path(a.file)
+    _print(ia_sos.inspect(p) if a.source == "ia_sos" else sba.inspect(p, a.source))
+
+
+def cmd_build(a, conn):
+    _print(pipeline.build(conn, rematch=a.rematch, llm_classify_limit=a.llm_classify))
+
+
+def cmd_geocode(a, conn):
+    _print(geocode.geocode_missing(conn, limit=a.limit))
+
+
+def cmd_stats(a, conn):
+    _print(pipeline.stats(conn))
+
+
+def cmd_review(a, conn):
+    if a.action == "list":
+        rows = conn.execute(
+            """SELECT r.id, r.score, r.llm_verdict, sr.source, sr.canon->>'legal_name' AS record_name,
+                      sr.canon->>'address_line1' AS record_addr, sr.canon->>'city' AS record_city,
+                      b.legal_name AS candidate_name, b.address_line1 AS candidate_addr, b.city AS candidate_city
+                 FROM match_review r JOIN source_records sr ON sr.id = r.source_record_id
+                 JOIN businesses b ON b.id = r.candidate_business
+                WHERE r.status = 'pending' ORDER BY r.score DESC LIMIT %s""", (a.limit,)).fetchall()
+        _print(rows)
+    else:
+        _print(match.resolve_review(conn, a.id, accept=(a.action == "accept")))
+
+
+def cmd_export_top(a, conn):
+    """Phase 1 deliverable: top N targets per industry to a CSV spreadsheet."""
+    params = SearchParams(industry=a.industry, min_years_in_business=a.min_years, counties=a.counties)
+    out = export_targets(conn, user_id=None, max_rows=a.limit, search=params)
+    Path(a.out).write_text(out["csv"])
+    print(f"Wrote {out['rows']} rows to {a.out}", file=sys.stderr)
+
+
+def cmd_user(a, conn):
+    if a.action == "create":
+        u = accounts.create_user(conn, a.email, a.plan)
+        _print({"id": u.id, "email": u.email, "plan": u.plan.name})
+    elif a.action == "key":
+        u = accounts.get_user_by_email(conn, a.email)
+        if not u:
+            sys.exit(f"No user {a.email}; run `dealfeed user create {a.email}` first")
+        key = accounts.create_api_key(conn, u, a.label)
+        print(f"API key for {u.email} (shown once, store it now):\n{key}")
+    elif a.action == "usage":
+        u = accounts.get_user_by_email(conn, a.email)
+        _print(accounts.usage_summary(conn, u) if u else {"error": "no such user"})
+
+
+def cmd_demo(a, conn):
+    """Load the fictional fixture data and build, so you can try the API/MCP without real files."""
+    db.migrate(conn)
+    pulled = datetime.now(timezone.utc)
+    _print(ia_sos.load(conn, FIXTURES / "ia_sos_sample.csv", pulled))
+    _print(sba.load_ppp(conn, FIXTURES / "ppp_sample.csv", ["IA"], pulled))
+    _print(sba.load_sba(conn, FIXTURES / "sba_7a_sample.csv", "7a", ["IA"], pulled))
+    _print(pipeline.build(conn))
+    u = accounts.get_user_by_email(conn, "demo@example.com") or accounts.create_user(conn, "demo@example.com", "fund")
+    print(f"\nDemo user demo@example.com (fund plan). API key:\n{accounts.create_api_key(conn, u, 'demo')}")
+
+
+def cmd_serve_api(a, conn):
+    import uvicorn
+    conn.close()
+    uvicorn.run("dealfeed.api.app:app", host=a.host, port=a.port, reload=a.reload)
+
+
+def cmd_serve_mcp(a, conn):
+    from . import mcp_server
+    conn.close()
+    mcp_server.main(a.transport, a.host, a.port)
+
+
+def main(argv: list[str] | None = None) -> None:
+    ap = argparse.ArgumentParser(prog="dealfeed", description=__doc__)
+    ap.add_argument("-v", "--verbose", action="store_true")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("migrate", help="create/upgrade database tables").set_defaults(fn=cmd_migrate)
+
+    p = sub.add_parser("ingest", help="load a raw source file")
+    p.add_argument("source", choices=["ia-sos", "ppp", "7a", "504"])
+    p.add_argument("file_list", nargs="*", metavar="FILE", help="CSV file(s) for ppp/7a/504")
+    p.add_argument("--file", help="CSV file for ia-sos")
+    p.add_argument("--download", action="store_true", help="ia-sos: download the latest file from data.iowa.gov")
+    p.add_argument("--states", default="IA", help="comma-separated states to keep from SBA files")
+    p.set_defaults(fn=cmd_ingest)
+
+    p = sub.add_parser("inspect", help="show a file's columns and how they map")
+    p.add_argument("file")
+    p.add_argument("--source", choices=["ia_sos", "ppp", "7a", "504"], required=True)
+    p.set_defaults(fn=cmd_inspect)
+
+    p = sub.add_parser("build", help="match, classify, size and score")
+    p.add_argument("--rematch", action="store_true", help="redo automatic matches (keeps manual decisions)")
+    p.add_argument("--llm-classify", type=int, default=0, metavar="N",
+                   help="classify up to N unclassified businesses with Claude (needs DEALFEED_LLM=on)")
+    p.set_defaults(fn=cmd_build)
+
+    p = sub.add_parser("geocode", help="add lat/lon/county via the Census geocoder")
+    p.add_argument("--limit", type=int)
+    p.set_defaults(fn=cmd_geocode)
+
+    sub.add_parser("stats", help="data metrics").set_defaults(fn=cmd_stats)
+
+    p = sub.add_parser("review", help="manual match review queue")
+    p.add_argument("action", choices=["list", "accept", "reject"])
+    p.add_argument("id", nargs="?", type=int)
+    p.add_argument("--limit", type=int, default=25)
+    p.set_defaults(fn=cmd_review)
+
+    p = sub.add_parser("export-top", help="write top targets for an industry to CSV")
+    p.add_argument("--industry", required=True)
+    p.add_argument("--limit", type=int, default=100)
+    p.add_argument("--min-years", type=int)
+    p.add_argument("--counties", nargs="*")
+    p.add_argument("--out", required=True)
+    p.set_defaults(fn=cmd_export_top)
+
+    p = sub.add_parser("user", help="manage customers and API keys")
+    p.add_argument("action", choices=["create", "key", "usage"])
+    p.add_argument("email")
+    p.add_argument("--plan", default="free", choices=list(accounts.PLANS))
+    p.add_argument("--label")
+    p.set_defaults(fn=cmd_user)
+
+    sub.add_parser("demo", help="load fictional sample data and build").set_defaults(fn=cmd_demo)
+
+    p = sub.add_parser("serve-api", help="run the REST API")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--reload", action="store_true")
+    p.set_defaults(fn=cmd_serve_api)
+
+    p = sub.add_parser("serve-mcp", help="run the MCP server")
+    p.add_argument("--transport", choices=["stdio", "http"], default="stdio")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8001)
+    p.set_defaults(fn=cmd_serve_mcp)
+
+    a = ap.parse_args(argv)
+    # stdout is the MCP channel in stdio mode, so logs always go to stderr.
+    logging.basicConfig(level=logging.INFO if a.verbose else logging.WARNING, stream=sys.stderr)
+    conn = db.connect()
+    try:
+        a.fn(a, conn)
+    finally:
+        if not conn.closed:
+            conn.close()
+
+
+if __name__ == "__main__":
+    main()
