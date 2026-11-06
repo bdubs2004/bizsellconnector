@@ -108,7 +108,7 @@ real benchmarks before customers see them.
 - only names from public filings are exposed, with role and source
 
 **One ops layer.** REST and MCP both go through `services/ops.py`, so plan gates, per-call caps,
-monthly row quotas and `api_usage` metering behave identically. MCP tools are async: they read the caller
+fair-use view caps, credits (exports and REST pulls) and `api_usage` logging behave identically. MCP tools are async: they read the caller
 from the auth context and then run DB work in a worker thread.
 
 **Web app.** Every page is a plain HTML form that works without JavaScript. When HTMX is loaded, requests

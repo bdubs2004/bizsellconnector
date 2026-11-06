@@ -108,11 +108,17 @@ def _csv(rows: list[dict], today: date) -> str:
 
 
 def export_targets(conn: psycopg.Connection, user_id, max_rows: int, search: SearchParams | None = None,
-                   saved_status: str | None = None, saved: bool = False, today: date | None = None) -> dict:
+                   saved_status: str | None = None, saved: bool = False, today: date | None = None,
+                   allow=None) -> dict:
+    """allow(ids) -> the ids the caller may receive (credits); rows outside it are dropped, order kept."""
     today = today or date.today()
     if saved:
         rows = _saved_rows(conn, user_id, saved_status, limit=max_rows)
     else:
         params = (search or SearchParams()).model_copy(update={"sort": "sell"} if max_rows > 1000 else {})
         rows, _, _ = search_rows(conn, params, limit=max_rows, offset=0, box=get_buy_box(conn, user_id))
-    return {"rows": len(rows), "csv": _csv(rows, today), "business_ids": [str(r["id"]) for r in rows]}
+    matched = len(rows)
+    if allow is not None:
+        keep = set(allow([str(r["id"]) for r in rows]))
+        rows = [r for r in rows if str(r["id"]) in keep]
+    return {"matched": matched, "rows": len(rows), "csv": _csv(rows, today), "business_ids": [str(r["id"]) for r in rows]}

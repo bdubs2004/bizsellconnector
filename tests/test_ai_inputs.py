@@ -16,6 +16,7 @@ def ai(built, monkeypatch):
     u = accounts.get_user_by_email(conn, "ai-inputs@example.com") or accounts.create_user(conn, "ai-inputs@example.com", "fund")
     conn.execute("DELETE FROM row_views WHERE user_id = %s", (u.id,))
     conn.execute("DELETE FROM api_usage WHERE user_id = %s", (u.id,))
+    conn.execute("DELETE FROM credit_charges WHERE user_id = %s", (u.id,))
     conn.commit()
     monkeypatch.setenv("DEALFEED_LOCAL_USER", "ai-inputs@example.com")
 
@@ -93,15 +94,25 @@ def test_ids_statuses_and_unknown_industry_note(ai, conn):
     assert any("isn't one of the classified industries" in n for n in out["notes"])
 
 
-def test_repeat_views_dont_burn_quota(ai, conn):
+def test_repeat_views_dont_burn_fair_use_and_chat_is_free(ai, conn):
     for _ in range(4):
         assert not ai("search_targets", {"industry": "pest control", "limit": 10})[0]
     once = ai("search_targets", {"industry": "pest control", "limit": 10})[1]["returned"]
-    used = accounts.rows_used_today(conn, ai.user)
-    assert used == once, f"5 identical searches charged {used} rows, expected {once}"
+    used = accounts.views_today(conn, ai.user)
+    assert used == once, f"5 identical searches counted {used} views, expected {once}"
     bid = biz_id(conn, "Hawkeye%")
     ai("get_business", {"business_id": bid})
-    assert accounts.rows_used_today(conn, ai.user) == used, "profile of an already-seen business is free"
+    assert accounts.views_today(conn, ai.user) == used, "profile of an already-seen business is free"
+    assert accounts.credits(conn, ai.user)["used_this_month"] == 0, "viewing in AI chat never costs credits"
+
+
+def test_exports_cost_credits_once_per_month(ai, conn):
+    err, first = ai("export_targets", {"industry": "pest control", "max_rows": 5})
+    assert not err and first["credits_charged"] == first["rows"] > 0
+    err, again = ai("export_targets", {"industry": "pest control", "max_rows": 5})
+    assert not err and again["credits_charged"] == 0 and again["credits_left"] == first["credits_left"]
+    acct = ai("get_account", {})[1]
+    assert acct["credits"]["used_this_month"] == first["rows"] and "how_it_works" in acct
 
 
 def test_ai_defaults_keep_responses_small(ai):

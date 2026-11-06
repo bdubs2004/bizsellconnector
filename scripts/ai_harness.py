@@ -33,7 +33,7 @@ security.LIMITS.update({k: (10**9, 60) for k in security.LIMITS})   # harness me
 import dataclasses
 if "--real-caps" not in sys.argv:
     for k, v in list(accounts.PLANS.items()):
-        accounts.PLANS[k] = dataclasses.replace(v, rows_per_day=10**9, rows_per_month=10**9)
+        accounts.PLANS[k] = dataclasses.replace(v, views_per_day=10**9, credits_per_month=10**9)
 
 findings: list[str] = []
 errors_seen: dict[str, list] = {}
@@ -161,12 +161,12 @@ async def scenario(user_email, plan, rnd: random.Random, n_random: int):
         # 2b. fair metering: repeating the same search must not consume more quota
         if "--real-caps" in sys.argv:
             conn = db.connect(); u = accounts.get_user_by_email(conn, user_email)
-            before = accounts.rows_used_today(conn, u)
+            before = accounts.views_today(conn, u)
             for _ in range(5):
                 await call(c, "search_targets", {"industry": "pest control", "state": "IA", "limit": 25})
-            after = accounts.rows_used_today(conn, u); conn.close()
+            after = accounts.views_today(conn, u); conn.close()
             if after - before > 25:
-                finding(f"METERING repeated identical searches charged {after - before} rows (expected <= 25)")
+                finding(f"METERING repeated identical searches counted {after - before} views (expected <= 25)")
 
         # 3. a real result to drill into
         err, out, _ = await call(c, "search_targets", {"limit": 5})
@@ -269,6 +269,8 @@ def ensure_user(email, plan):
     conn.execute("DELETE FROM buy_boxes WHERE user_id = %s", (u.id,))
     conn.execute("DELETE FROM saved_targets WHERE user_id = %s", (u.id,))
     conn.execute("DELETE FROM api_usage WHERE user_id = %s", (u.id,))
+    for t in ("row_views", "credit_charges", "credit_grants"):
+        conn.execute(f"DELETE FROM {t} WHERE user_id = %s", (u.id,))
     conn.commit()
     conn.close()
 

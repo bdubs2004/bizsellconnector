@@ -75,13 +75,17 @@
     <section class="card">
       <h2 class="h-sm">Plan and usage</h2>
       <p><span class="plan-chip">{{ usage.plan }}</span></p>
-      {% if usage.rows_per_month %}
-      {% set pct = [100, (usage.rows_used_this_month / usage.rows_per_month * 100)|round|int]|min %}
-      <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="{{ usage.rows_per_month }}" aria-valuenow="{{ usage.rows_used_this_month }}" aria-label="Rows used this month">
+      {% set c = usage.credits %}
+      {% if c.monthly_allowance or c.topup_left %}
+      {% set total = c.monthly_allowance + c.topup_left %}
+      {% set pct = [100, ((total - c.left) / total * 100)|round|int]|min if total else 100 %}
+      <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="{{ total }}" aria-valuenow="{{ total - c.left }}" aria-label="Export credits used">
         <span style="width: {{ pct }}%"></span>
       </div>
-      <p class="small">{{ usage.rows_used_this_month }} of {{ usage.rows_per_month }} rows used this month</p>
+      <p class="small"><strong>{{ c.left }}</strong> export credits left{% if c.topup_left %} ({{ c.topup_left }} from top-ups){% endif %}. {{ c.monthly_allowance }} included each month.</p>
       {% endif %}
+      <p class="small">Searching and viewing are free: {{ usage.views_today }} of {{ usage.views_per_day }} new businesses viewed today (fair use).</p>
+      <p class="hint">Credits are used only when data leaves Deal Feed: 1 per business in a CSV export or REST API response, once a month. Re-exporting the same business that month is free.</p>
       <ul class="plain small">
         <li>Up to {{ usage.max_rows_per_call }} results per search</li>
         <li>AI assistant (MCP): {{ 'included' if usage.mcp_enabled else 'not included' }}</li>

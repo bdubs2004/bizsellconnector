@@ -13,7 +13,7 @@
     {% endif %}
   </p>
   {% if r.total_matching and user.plan.export %}
-  <a class="btn btn-ghost btn-sm" href="/search/export.csv?{{ export_qs }}">Export CSV</a>
+  <a class="btn btn-ghost btn-sm" href="/search/export.csv?{{ export_qs }}" title="1 credit per business not already exported this month">Export CSV</a>
   {% endif %}
 </div>
 

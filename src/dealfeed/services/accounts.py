@@ -11,21 +11,28 @@ import psycopg
 
 @dataclass(frozen=True)
 class Plan:
+    """Metering follows the industry pattern (ZoomInfo, Apollo): searching and viewing inside Deal Feed (web
+    and AI chat) is free under a daily fair-use cap; credits are spent only when data leaves the platform,
+    i.e. CSV exports and REST API results. One credit per business per month."""
     name: str
-    rows_per_month: int | None    # None = unlimited (metered/billed instead)
+    views_per_day: int        # fair use: new businesses viewed per day (anti-scraping)
+    credits_per_month: int    # export / API credits included each month
     max_per_call: int
     mcp: bool
     export: bool
     max_export_rows: int
-    rows_per_day: int             # anti-scraping: nobody needs their whole month in one day
 
 
 PLANS = {
-    "free": Plan("free", 50, 10, mcp=False, export=False, max_export_rows=0, rows_per_day=50),
-    "searcher": Plan("searcher", 1_000, 50, mcp=True, export=True, max_export_rows=500, rows_per_day=400),
-    "fund": Plan("fund", 5_000, 50, mcp=True, export=True, max_export_rows=2_000, rows_per_day=1_500),
-    # Usage-billed; the caps are abuse ceilings, not product limits.
-    "api": Plan("api", 100_000, 50, mcp=True, export=True, max_export_rows=5_000, rows_per_day=20_000),
+    "free": Plan("free", views_per_day=50, credits_per_month=25, max_per_call=10, mcp=False, export=False,
+                 max_export_rows=0),
+    "searcher": Plan("searcher", views_per_day=1_000, credits_per_month=500, max_per_call=50, mcp=True,
+                     export=True, max_export_rows=500),
+    "fund": Plan("fund", views_per_day=3_000, credits_per_month=2_500, max_per_call=50, mcp=True, export=True,
+                 max_export_rows=2_500),
+    # Usage-billed: included credits, then top-ups / metered billing (Stripe, later).
+    "api": Plan("api", views_per_day=20_000, credits_per_month=10_000, max_per_call=50, mcp=True, export=True,
+                max_export_rows=5_000),
 }
 MAX_ACTIVE_KEYS = 5
 
@@ -35,7 +42,15 @@ class AuthError(Exception):
 
 
 class PlanError(Exception):
-    """The caller's plan doesn't allow this, or the monthly quota is used up."""
+    """The caller's plan doesn't allow this, the fair-use limit is reached, or credits ran out."""
+
+
+class InsufficientCredits(PlanError):
+    def __init__(self, needed: int, left: int):
+        super().__init__(f"Out of credits: this needs {needed} (one per business not already exported or pulled "
+                         f"this month) and you have {left} left. Searching and viewing in Deal Feed stay free; "
+                         "add credits or wait for next month's allowance to export.")
+        self.needed, self.left = needed, left
 
 
 @dataclass(frozen=True)
@@ -129,66 +144,116 @@ def revoke_api_key(conn: psycopg.Connection, key_prefix: str) -> int:
     return n
 
 
-# --- metering ---------------------------------------------------------------
+# --- metering: free views (fair use) + credits for data that leaves ---------------------------------
 
-def rows_used_this_month(conn: psycopg.Connection, user: User) -> int:
-    return conn.execute(
-        "SELECT coalesce(sum(rows_returned), 0) AS n FROM api_usage "
-        "WHERE user_id = %s AND called_at >= date_trunc('month', now())",
-        (user.id,),
-    ).fetchone()["n"]
+_MONTH = "date_trunc('month', now())::date"
 
 
-def rows_used_today(conn: psycopg.Connection, user: User) -> int:
-    return conn.execute(
-        "SELECT coalesce(sum(rows_returned), 0) AS n FROM api_usage "
-        "WHERE user_id = %s AND called_at >= date_trunc('day', now())", (user.id,)).fetchone()["n"]
+def views_today(conn: psycopg.Connection, user: User) -> int:
+    return conn.execute("SELECT count(*) AS n FROM row_views WHERE user_id = %s AND first_day = current_date",
+                        (user.id,)).fetchone()["n"]
 
 
-def allowed_rows(conn: psycopg.Connection, user: User, requested: int) -> int:
-    """How many rows this call may return given per-call, daily and monthly limits. Raises if zero."""
-    n = max(1, min(requested, user.plan.max_per_call))
-    day_left = user.plan.rows_per_day - rows_used_today(conn, user)
-    if day_left <= 0:
-        raise PlanError(f"Daily row limit reached ({user.plan.rows_per_day} rows). Resets at midnight UTC.")
-    n = min(n, day_left)
-    if user.plan.rows_per_month is not None:
-        remaining = user.plan.rows_per_month - rows_used_this_month(conn, user)
-        if remaining <= 0:
-            raise PlanError(f"Monthly row limit reached for the {user.plan.name} plan "
-                            f"({user.plan.rows_per_month} rows). Resets on the 1st, or upgrade.")
-        n = min(n, remaining)
+def check_views(conn: psycopg.Connection, user: User) -> None:
+    """Viewing is free, but not unlimited: the daily fair-use cap stops bulk scraping through search."""
+    if views_today(conn, user) >= user.plan.views_per_day:
+        raise PlanError(f"Daily fair-use limit reached: {user.plan.views_per_day} new businesses viewed today. "
+                        "Businesses you've already seen this month still open. Resets at midnight UTC.")
+
+
+def viewed_this_month(conn: psycopg.Connection, user: User, business_id) -> bool:
+    return conn.execute(f"SELECT 1 FROM row_views WHERE user_id = %s AND month = {_MONTH} AND business_id = %s",
+                        (user.id, str(business_id))).fetchone() is not None
+
+
+def record_views(conn: psycopg.Connection, user: User, business_ids: list) -> int:
+    if not business_ids:
+        return 0
+    n = len(conn.execute(
+        f"INSERT INTO row_views (user_id, month, business_id, first_day) "
+        f"SELECT %s, {_MONTH}, unnest(%s::uuid[]), current_date ON CONFLICT DO NOTHING RETURNING business_id",
+        (user.id, [str(b) for b in business_ids])).fetchall())
+    conn.commit()
     return n
 
 
-def record_usage(conn: psycopg.Connection, user: User, tool: str, rows: int, surface: str,
-                 business_ids: list | None = None) -> int:
-    """Log a call. With business_ids, only businesses this user hasn't seen yet this month are charged
-    (rows_returned = newly charged rows), so repeat views and overlapping searches are free.
-    Returns the number of rows charged."""
-    charged = rows
-    if business_ids:
-        charged = len(conn.execute(
-            "INSERT INTO row_views (user_id, month, business_id) "
-            "SELECT %s, date_trunc('month', now())::date, unnest(%s::uuid[]) "
-            "ON CONFLICT DO NOTHING RETURNING business_id",
-            (user.id, [str(b) for b in business_ids])).fetchall())
-    conn.execute("INSERT INTO api_usage (user_id, tool, surface, rows_returned) VALUES (%s, %s, %s, %s)",
-                 (user.id, tool, surface, charged))
+def credits(conn: psycopg.Connection, user: User) -> dict:
+    """Plan credits reset monthly and are used first; top-ups carry over until used."""
+    monthly = user.plan.credits_per_month
+    used = conn.execute(f"SELECT count(*) AS n FROM credit_charges WHERE user_id = %s AND month = {_MONTH}",
+                        (user.id,)).fetchone()["n"]
+    granted = conn.execute("SELECT coalesce(sum(amount), 0)::int AS n FROM credit_grants WHERE user_id = %s",
+                           (user.id,)).fetchone()["n"]
+    spilled = conn.execute(   # usage beyond each month's plan credits came out of top-ups
+        "SELECT coalesce(sum(greatest(n - %s, 0)), 0)::int AS n FROM "
+        "(SELECT count(*) AS n FROM credit_charges WHERE user_id = %s GROUP BY month) x",
+        (monthly, user.id)).fetchone()["n"]
+    topup_left = max(0, granted - spilled)
+    monthly_left = max(0, monthly - used)
+    return {"monthly_allowance": monthly, "used_this_month": used, "monthly_left": monthly_left,
+            "topup_left": topup_left, "left": monthly_left + topup_left}
+
+
+def _already_charged(conn, user, ids) -> set[str]:
+    rows = conn.execute(f"SELECT business_id FROM credit_charges WHERE user_id = %s AND month = {_MONTH} "
+                        "AND business_id = ANY(%s::uuid[])", (user.id, [str(i) for i in ids])).fetchall()
+    return {str(r["business_id"]) for r in rows}
+
+
+def affordable(conn: psycopg.Connection, user: User, ids: list) -> list[str]:
+    """The ids (in order) this user can receive right now: everything already paid for this month, plus as
+    many new ones as their credits cover."""
+    ids = [str(i) for i in ids]
+    paid = _already_charged(conn, user, ids)
+    left = credits(conn, user)["left"]
+    out = []
+    for i in ids:
+        if i in paid:
+            out.append(i)
+        elif left > 0:
+            out.append(i)
+            left -= 1
+    return out
+
+
+def charge_credits(conn: psycopg.Connection, user: User, ids: list, kind: str) -> int:
+    """Charge one credit per business not already charged this month. All or nothing."""
+    ids = list(dict.fromkeys(str(i) for i in ids))
+    new = [i for i in ids if i not in _already_charged(conn, user, ids)]
+    left = credits(conn, user)["left"]
+    if len(new) > left:
+        raise InsufficientCredits(len(new), left)
+    if new:
+        conn.execute(f"INSERT INTO credit_charges (user_id, month, business_id, kind) "
+                     f"SELECT %s, {_MONTH}, unnest(%s::uuid[]), %s ON CONFLICT DO NOTHING", (user.id, new, kind))
+        conn.commit()
+    return len(new)
+
+
+def grant_credits(conn: psycopg.Connection, user: User, amount: int, reason: str | None = None) -> dict:
+    conn.execute("INSERT INTO credit_grants (user_id, amount, reason) VALUES (%s, %s, %s)", (user.id, amount, reason))
     conn.commit()
-    return charged
+    return credits(conn, user)
+
+
+def record_usage(conn: psycopg.Connection, user: User, tool: str, rows: int, surface: str) -> None:
+    """Call log (analytics / billing audit). rows = credits charged by the call."""
+    conn.execute("INSERT INTO api_usage (user_id, tool, surface, rows_returned) VALUES (%s, %s, %s, %s)",
+                 (user.id, tool, surface, rows))
+    conn.commit()
 
 
 def usage_summary(conn: psycopg.Connection, user: User) -> dict:
-    used = rows_used_this_month(conn, user)
     return {
         "email": user.email,
         "plan": user.plan.name,
-        "rows_used_this_month": used,
-        "rows_per_month": user.plan.rows_per_month,
+        "credits": credits(conn, user),
+        "views_today": views_today(conn, user),
+        "views_per_day": user.plan.views_per_day,
         "max_rows_per_call": user.plan.max_per_call,
-        "rows_used_today": rows_used_today(conn, user),
-        "rows_per_day": user.plan.rows_per_day,
         "mcp_enabled": user.plan.mcp,
         "exports_enabled": user.plan.export,
+        "how_it_works": ("Searching and viewing in Deal Feed (web and AI chat) is free under a daily fair-use "
+                         "limit. Credits are used when data leaves: 1 per business exported or returned by the REST "
+                         "API, once per month per business."),
     }

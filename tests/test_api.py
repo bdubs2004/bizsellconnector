@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -98,9 +100,10 @@ def test_free_plan_limits(client, keys, conn):
     r = client.post("/v1/targets/search", json={"limit": 50}, headers=h(keys["free"]))
     assert r.json()["returned"] <= 10
     assert client.post("/v1/exports", json={"saved": True}, headers=h(keys["free"])).status_code == 402
-    # Burn the rest of the monthly quota, then expect a 402
+    # Burn the rest of the month's credits, then API pulls of new businesses get a 402
     free = accounts.get_user_by_email(conn, "free@example.com")
-    accounts.record_usage(conn, free, "test", 1000, "api")
-    assert client.post("/v1/targets/search", json={}, headers=h(keys["free"])).status_code == 402
+    accounts.charge_credits(conn, free, [uuid.uuid4() for _ in range(accounts.credits(conn, free)["left"])], "api")
+    r = client.post("/v1/targets/search", json={"industry": "janitorial"}, headers=h(keys["free"]))
+    assert r.status_code == 402 and "Out of credits" in r.json()["detail"]
     me = client.get("/v1/me", headers=h(keys["free"])).json()
-    assert me["rows_used_this_month"] >= 1000
+    assert me["credits"]["left"] == 0 and me["credits"]["monthly_allowance"] == 25

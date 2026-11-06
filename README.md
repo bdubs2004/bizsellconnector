@@ -205,10 +205,28 @@ classifications by hand before trusting them (scope 3.2 step 4).
 dealfeed user create you@example.com --plan fund
 dealfeed user key you@example.com          # prints a dfk_... key once; only its hash is stored
 dealfeed user usage you@example.com
+dealfeed user credits you@example.com --amount 1000 --label "top-up"   # add credits (top-ups never expire)
 ```
 
-Plans (`services/accounts.py`, from scope Section 9): free (10 per call, 50 rows/month, no MCP, no export),
-searcher (1,000 rows/month), fund (5,000), api (metered, 100k abuse cap). Per-call results are capped at 50.
+### Plans and credits
+
+Metering follows ZoomInfo and Apollo. **Searching and viewing inside Deal Feed is free**, in the web app and
+in AI chat over MCP. A daily fair-use cap counts *new* businesses viewed, so bulk scraping through search
+stops while normal research never notices. **Credits are spent when data leaves the platform**: 1 credit per
+business in a CSV export or in a REST API response (search results, profiles, saved list). Each business is
+charged once per month, so re-exporting or re-pulling it that month is free. Each month's plan credits are
+used first and top-ups carry over. If credits run short, an export or API search returns the top rows they
+cover and says so.
+
+| Plan | Fair-use views/day | Credits/month | Per call | MCP | CSV export (max rows) |
+|---|---|---|---|---|---|
+| free | 50 | 25 (API only) | 10 | no | no |
+| searcher | 1,000 | 500 | 50 | yes | 500 |
+| fund | 3,000 | 2,500 | 50 | yes | 2,500 |
+| api | 20,000 | 10,000 + top-ups | 50 | yes | 5,000 |
+
+Balances: `GET /v1/me`, the MCP tool `get_account`, or the Connect page. Exports return `X-Credits-Charged`,
+`X-Credits-Left` and `X-Rows-Matched` headers.
 
 ## Connect it to Claude
 
@@ -273,7 +291,8 @@ All of it ran against the fictional fixtures and Postgres 16.
 - Set `DEALFEED_SESSION_SECRET` and `DEALFEED_ENV=production` when hosting (secure cookies, dev login off)
 - Connection pooling (`psycopg_pool`), Sentry, scheduled refresh (GitHub Actions or Railway cron)
 - Raw-file storage on R2/S3 instead of a local folder
-- Stripe subscriptions and metered billing (the `api_usage` table already records rows per call)
+- Stripe subscriptions and credit top-up checkout (credit `credit_grants` on payment; `credit_charges` and
+  `api_usage` are the billing audit trail)
 - Website-enrichment signals (`score.py` already reads `stale_website` / `no_website` from `signals`)
 - Census CBP coverage metric
 - Connecticut Principals dataset (officer names; its residence-address columns must stay out)

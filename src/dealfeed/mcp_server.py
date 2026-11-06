@@ -54,6 +54,10 @@ Typical flow: get_buy_box (set_buy_box if it's still the default) -> market_summ
 search_targets (ranked by priority: likely to sell x fit for the buy box) -> get_business / explain_score /
 check_live_status on the interesting ones -> sba_deal_math for financing scenarios -> save_target.
 
+Billing: searching and viewing here is free (a daily fair-use cap on new businesses viewed applies).
+Credits are only used by CSV exports: 1 per business, and re-exporting the same business that month is free.
+Before a large export, tell the user how many credits it may use (get_account shows what's left).
+
 Always tell the user that scores are directional estimates, that size figures are ranges from 2020-21 PPP
 data, and show the data dates included in responses. Never present stale data as current. Industries with
 best coverage: pest control, commercial cleaning/janitorial, independent insurance agencies.
@@ -179,8 +183,8 @@ def register_tools(server: MCPServer) -> None:
         state: IA, CO, NY, CT, OR or TX, or the state name (omit for all).
         counties: county names (populated for NY and PPP-matched businesses; sparse elsewhere). Size filters use
         estimated employees / annual payroll from PPP data; include_unknown_size keeps businesses with no
-        estimate. limit defaults to 10 (each result costs context and quota); ask for up to 50 when the user
-        wants a longer list, and page with offset/next_offset. Repeat views of a business don't use quota.
+        estimate. limit defaults to 10 (each result costs context); ask for up to 50 when the user
+        wants a longer list, and page with offset/next_offset. Viewing is free; a daily fair-use cap counts new businesses only.
 
         Each result has three scores: score (likely to sell), buy_score (fit for the user's buy box: industry
         quality, est. price vs. their range, debt coverage at their rate, cash to close) and priority (both
@@ -295,6 +299,11 @@ def register_tools(server: MCPServer) -> None:
         return await _run(lambda ops: ops.list_saved_targets(status))
 
     @server.tool(annotations=READ)
+    async def get_account() -> dict[str, Any]:
+        """The user's plan, credits left this month (used by exports), and today's fair-use views."""
+        return await _run(lambda ops: ops.me())
+
+    @server.tool(annotations=READ)
     async def export_targets(
         saved: bool = False,
         saved_status: str | None = None,
@@ -308,7 +317,8 @@ def register_tools(server: MCPServer) -> None:
         """CSV export of either the user's saved pipeline (saved=true) or a search, ranked by priority.
         Returns the CSV text in `csv`; offer to save it as a file for the user. max_rows defaults to 100 to keep
         the CSV a reasonable size in this conversation (up to 500); for bigger exports point the user to the web
-        app's Export CSV button. Search exports count toward the row quota (businesses already seen don't)."""
+        app's Export CSV button. Uses 1 credit per business not already exported this
+        month (saved or search); the response shows credits_charged and credits_left."""
         sp = None if saved else _build(SearchParams, industry=industry, state=state, counties=counties,
                                              min_years_in_business=min_years_in_business, min_score=min_score)
         cap = max(1, min(int(max_rows), 500))

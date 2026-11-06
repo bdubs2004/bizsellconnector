@@ -4,7 +4,7 @@
 <div class="page-head">
   <h1>Your pipeline</h1>
   {% if data.targets and user.plan.export %}
-  <a class="btn btn-ghost btn-sm" href="/pipeline/export.csv{% if status %}?status={{ status }}{% endif %}">Export CSV</a>
+  <a class="btn btn-ghost btn-sm" href="/pipeline/export.csv{% if status %}?status={{ status }}{% endif %}" title="1 credit per business not already exported this month">Export CSV</a>
   {% endif %}
 </div>
 

@@ -32,8 +32,9 @@ are in `src/dealfeed/security.py` and are covered by `tests/test_security.py`.
 - Rate limits per user: API 60/min, MCP 60/min, web 180/min, live state checks 20/min.
   - Globally: live state checks 300/min.
   - Per IP: sign-in attempts 10/min, bad API keys 20 per 5 min.
-- Plan quotas: rows per call (10–50), per day and per month. Search paging stops at offset 1,000.
-  Export sizes are capped per plan.
+- Plan limits: rows per call (10–50), plus a daily fair-use cap on new businesses viewed (50 to 20,000) on
+  every surface. Bulk data leaving the platform (exports, REST API) costs credits, one per business per
+  month. Search paging stops at offset 1,000, and export sizes are capped per plan.
 - Search input lengths are bounded, and LIKE wildcards in user text are escaped.
 
 **Web**

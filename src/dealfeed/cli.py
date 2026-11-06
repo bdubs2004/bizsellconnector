@@ -158,6 +158,13 @@ def cmd_user(a, conn):
     elif a.action == "usage":
         u = accounts.get_user_by_email(conn, a.email)
         _print(accounts.usage_summary(conn, u) if u else {"error": "no such user"})
+    elif a.action == "credits":
+        u = accounts.get_user_by_email(conn, a.email)
+        if not u:
+            sys.exit(f"No user {a.email}")
+        if not a.amount or a.amount <= 0:
+            sys.exit("usage: dealfeed user credits EMAIL --amount 1000 [--label 'top-up, invoice 123']")
+        _print(accounts.grant_credits(conn, u, a.amount, a.label))
 
 
 def cmd_demo(a, conn):
@@ -280,10 +287,11 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=cmd_export_top)
 
     p = sub.add_parser("user", help="manage customers and API keys")
-    p.add_argument("action", choices=["create", "key", "usage"])
+    p.add_argument("action", choices=["create", "key", "usage", "credits"])
     p.add_argument("email")
     p.add_argument("--plan", default="free", choices=list(accounts.PLANS))
-    p.add_argument("--label")
+    p.add_argument("--label", help="API key label, or the reason for a credit grant")
+    p.add_argument("--amount", type=int, help="credits to add (top-up)")
     p.set_defaults(fn=cmd_user)
 
     sub.add_parser("demo", help="load fictional sample data and build").set_defaults(fn=cmd_demo)

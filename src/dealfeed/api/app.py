@@ -212,4 +212,7 @@ def export(body: ExportRequest, ops: Ops = Depends(get_ops),
     out = ops.export_targets(body.search, body.saved, body.saved_status)
     return PlainTextResponse(out["csv"], media_type="text/csv",
                              headers={"Content-Disposition": "attachment; filename=dealfeed-targets.csv",
-                                      "X-Rows": str(out["rows"])})
+                                      "X-Rows": str(out["rows"]),
+                                      "X-Credits-Charged": str(out["credits_charged"]),
+                                      "X-Credits-Left": str(out["credits_left"]),
+                                      "X-Rows-Matched": str(out["matched"])})

@@ -1,5 +1,7 @@
 """Security controls: headers, CSRF, error hygiene, rate limits, scraping limits, tenant isolation,
 removal requests, prompt-injection hygiene, production checks."""
+import uuid
+
 import anyio
 import pytest
 from fastapi.testclient import TestClient
@@ -122,9 +124,9 @@ def test_live_checks_throttled(conn, monkeypatch):
 def test_daily_cap_paging_depth_and_key_limit(conn):
     u, h = key_for(conn, "daily@example.com", plan="searcher")
     c = TestClient(app)
-    accounts.record_usage(conn, u, "test", u.plan.rows_per_day, "api")
+    accounts.record_views(conn, u, [uuid.uuid4() for _ in range(u.plan.views_per_day)])
     r = c.post("/v1/targets/search", json={}, headers=h)
-    assert r.status_code == 402 and "Daily" in r.json()["detail"]
+    assert r.status_code == 402 and "fair-use" in r.json()["detail"]
     assert c.post("/v1/targets/search", json={"offset": 5000}, headers=h).status_code == 422
     for _ in range(accounts.MAX_ACTIVE_KEYS - 1):
         accounts.create_api_key(conn, u)
