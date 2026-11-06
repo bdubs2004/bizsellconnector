@@ -51,7 +51,7 @@ cp .env.example .env && set -a && source .env && set +a
 dealfeed migrate
 dealfeed demo                              # loads tests/fixtures/*, builds, prints a demo API key
 dealfeed serve                             # web app at http://localhost:8000, API docs at /docs
-pytest -q                                  # 73 tests; DROPS the dealfeed_test schema each run
+pytest -q                                  # 81 tests; DROPS the dealfeed_test schema each run
 ```
 
 Try it:
@@ -61,6 +61,33 @@ curl -s -X POST localhost:8000/v1/targets/search \
   -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
   -d '{"industry": "pest control", "min_years_in_business": 20}'
 ```
+
+## Three scores
+
+| Score | Question | Stored? |
+|---|---|---|
+| **Sell** (0–100) | Is the owner likely to sell in the next few years? | Yes (`businesses.score`), recomputed each build |
+| **Buy** (0–100) | Is it a good acquisition *for this buyer*? | No: computed per user from their buy box |
+| **Priority** | Both: geometric mean, high only when both are | No |
+
+The **buy box** (`/buy-box`, `PUT /v1/buy-box`, MCP `set_buy_box`) holds a buyer's industries, states,
+price range, cash available, SBA rate and term, target multiple, minimum DSCR and salary. Users without one
+get labeled defaults ($0.5M–$5M, $300k cash, `DEALFEED_REFERENCE_RATE`, default 10.5%). The buy score is
+made of:
+- fit to the buy box
+- industry quality (recurring revenue, margins)
+- estimated price vs. the buyer's range
+- debt coverage at their rate, using the deal-math engine
+- cash to close vs. their cash, plus the $5M SBA 7(a) cap
+- stability and data confidence
+
+Every point has a reason. Price and cash flow come from the PPP-based revenue range times the industry's SDE
+margin and multiple. **Those industry benchmarks (`industries.py`) are placeholders**, so replace them with
+real comps before customers rely on buy scores.
+
+Search ranks by priority by default (`sort=priority|sell|buy`). Priority and buy ranking re-rank the top
+1,000 matches by sell score, because buy scores are per user and can't be indexed. That re-ranking takes
+milliseconds.
 
 ## Storage
 
@@ -181,9 +208,10 @@ claude.ai and ChatGPT connectors need a real OAuth login flow; that's Phase 3 (s
 
 | MCP tool | REST | Notes |
 |---|---|---|
-| `search_targets` | `POST /v1/targets/search` | ranked by score; filters: industry/NAICS, counties, city, years, employees, payroll, min score |
+| `search_targets` | `POST /v1/targets/search` | ranked by priority (or sell/buy); filters: state, industry/NAICS, counties, city, years, employees, payroll, min score, in buy box |
 | `get_business` | `GET /v1/businesses/{id}` | every field with source + date; never returns raw records |
-| `explain_score` | `GET /v1/businesses/{id}/score` | point-by-point |
+| `explain_score` | `GET /v1/businesses/{id}/score` | sell and buy scores, point by point, plus the deal estimate |
+| `get_buy_box` / `set_buy_box` | `GET/PUT /v1/buy-box` | the buyer's criteria that drive buy scores |
 | `check_live_status` | `GET /v1/businesses/{id}/live-status` | asks the state registry right now (CO, NY, CT, OR, TX; not IA); flags name/address/status changes |
 | `sba_deal_math` | `POST /v1/deal-math` | interest rate is always an input |
 | `market_summary` | `GET /v1/markets/summary` | counts, age/size/score distributions, counties, 7(a) benchmarks |

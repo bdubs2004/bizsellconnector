@@ -1,0 +1,4 @@
+<div class="score-stack" title="Priority = likely to sell × fit for your buy box">
+  <span class="score score-{{ t.priority|score_band }}">{{ t.priority if t.priority is not none else '–' }}</span>
+  <span class="score-sub">S {{ t.score if t.score is not none else '–' }} · B {{ t.buy_score if t.buy_score is not none else '–' }}</span>
+</div>

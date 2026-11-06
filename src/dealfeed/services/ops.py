@@ -6,7 +6,7 @@ from datetime import date
 
 import psycopg
 
-from . import accounts, business, deal_math, live, search, targets
+from . import accounts, business, buybox, deal_math, live, search, targets
 from .accounts import PlanError, User
 
 
@@ -20,9 +20,20 @@ class Ops:
     def _meter(self, tool: str, rows: int) -> None:
         accounts.record_usage(self.conn, self.user, tool, rows, self.surface)
 
+    def buy_box(self):
+        return buybox.get_buy_box(self.conn, self.user.id)
+
+    def get_buy_box(self) -> dict:
+        return buybox.describe(self.buy_box())
+
+    def set_buy_box(self, inp: buybox.BuyBoxInput) -> dict:
+        out = buybox.describe(buybox.set_buy_box(self.conn, self.user.id, inp))
+        self._meter("set_buy_box", 0)
+        return out
+
     def search_targets(self, params: search.SearchParams) -> dict:
         limit = accounts.allowed_rows(self.conn, self.user, params.limit)
-        out = search.search_targets(self.conn, params, limit, self.today)
+        out = search.search_targets(self.conn, params, limit, self.today, box=self.buy_box())
         self._meter("search_targets", out["returned"])
         return out
 
@@ -33,7 +44,7 @@ class Ops:
         return out
 
     def explain_score(self, business_id: str) -> dict:
-        out = business.explain_score(self.conn, business_id)
+        out = business.explain_score(self.conn, business_id, self.user.id)
         self._meter("explain_score", 0)
         return out
 

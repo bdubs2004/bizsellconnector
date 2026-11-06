@@ -1,5 +1,5 @@
 <tr id="row-{{ t.business_id }}" {% if flash %}class="just-saved"{% endif %}>
-  <td><span class="score score-{{ t.score|score_band }}">{{ t.score if t.score is not none else '–' }}</span></td>
+  <td>{% include "partials/scores.html" %}</td>
   <td>
     <a class="strong" href="/business/{{ t.business_id }}">{{ t.name }}</a>
     <div class="muted small">{{ t.industry or 'Unclassified' }}{% if t.years_in_business is not none %} · {{ t.years_in_business }} yrs{% endif %}</div>

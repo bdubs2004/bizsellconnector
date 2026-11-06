@@ -10,6 +10,15 @@
       <details class="filter-details" open>
       <summary class="h-sm">Filters</summary>
       <div class="filter-body">
+      <label>Rank by
+        <select name="sort">
+          <option value="priority" {% if form.sort == 'priority' %}selected{% endif %}>Priority (sell × buy)</option>
+          <option value="sell" {% if form.sort == 'sell' %}selected{% endif %}>Likely to sell</option>
+          <option value="buy" {% if form.sort == 'buy' %}selected{% endif %}>Fit for my buy box</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" name="in_box" {% if form.in_box %}checked{% endif %}>
+        Only my buy box <a class="small" href="/buy-box">(edit)</a></label>
       <label>Industry
         <select name="industry">
           <option value="">Any industry</option>

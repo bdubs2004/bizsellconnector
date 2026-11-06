@@ -7,7 +7,9 @@ from datetime import date
 
 import psycopg
 
+from ..buy import annotate
 from ..score import attach_breakdowns
+from .buybox import get_buy_box
 from .business import NotFound, _uuid
 from .search import BASE_SELECT, SearchParams, search_rows, target_summary
 
@@ -57,7 +59,8 @@ def _saved_rows(conn: psycopg.Connection, user_id, status: str | None, limit: in
     if limit:
         sql += " LIMIT %(limit)s"
         args["limit"] = limit
-    return attach_breakdowns(conn, conn.execute(sql, args).fetchall())
+    rows = attach_breakdowns(conn, conn.execute(sql, args).fetchall())
+    return annotate(rows, get_buy_box(conn, user_id))
 
 
 def list_saved_targets(conn: psycopg.Connection, user_id, status: str | None = None, today: date | None = None) -> dict:
@@ -75,7 +78,7 @@ def list_saved_targets(conn: psycopg.Connection, user_id, status: str | None = N
     }
 
 
-EXPORT_COLUMNS = ["business_id", "name", "score", "industry", "naics_code", "city", "county", "state",
+EXPORT_COLUMNS = ["business_id", "name", "priority", "score", "buy_score", "est_price", "est_dscr", "industry", "naics_code", "city", "county", "state",
                   "years_in_business", "formation_date", "status", "employees_est", "payroll_est", "size_as_of",
                   "top_reasons", "pipeline_status", "notes", "state_registry_as_of"]
 
@@ -89,6 +92,9 @@ def _csv(rows: list[dict], today: date) -> str:
         se = t["size_estimate"] or {}
         w.writerow({
             **t,
+            "est_price": ("-".join(f"{v:,.0f}" for v in t["deal_estimate"]["price_range"])
+                          if t["deal_estimate"] else None),
+            "est_dscr": t["deal_estimate"]["dscr"] if t["deal_estimate"] else None,
             "employees_est": se.get("employees"), "payroll_est": se.get("annual_payroll"), "size_as_of": se.get("as_of"),
             "top_reasons": " · ".join(t["top_reasons"]),
             "pipeline_status": r.get("pipeline_status"), "notes": r.get("pipeline_notes"),
@@ -103,5 +109,6 @@ def export_targets(conn: psycopg.Connection, user_id, max_rows: int, search: Sea
     if saved:
         rows = _saved_rows(conn, user_id, saved_status, limit=max_rows)
     else:
-        rows, _, _ = search_rows(conn, search or SearchParams(), limit=max_rows, offset=0)
+        params = (search or SearchParams()).model_copy(update={"sort": "sell"} if max_rows > 1000 else {})
+        rows, _, _ = search_rows(conn, params, limit=max_rows, offset=0, box=get_buy_box(conn, user_id))
     return {"rows": len(rows), "csv": _csv(rows, today)}

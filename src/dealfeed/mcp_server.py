@@ -31,6 +31,7 @@ from .config import get_settings
 from .services import accounts
 from .services.accounts import AuthError, PlanError, User
 from .services.business import NotFound
+from .services.buybox import BuyBoxInput
 from .services.deal_math import DealInputs
 from .services.ops import Ops
 from .services.search import SearchParams
@@ -44,8 +45,9 @@ likely to sell in the next few years. Built for searchers doing entrepreneurship
 Coverage: established domestic for-profit entities from each state's public business registry, matched to
 SBA PPP/7(a)/504 loan records. State codes: {", ".join(SUPPORTED_STATES)}.
 
-Typical flow: market_summary to size an industry -> search_targets to get a ranked list -> get_business /
-explain_score on the interesting ones -> sba_deal_math for financing scenarios -> save_target to track them.
+Typical flow: get_buy_box (set_buy_box if it's still the default) -> market_summary to size an industry ->
+search_targets (ranked by priority: likely to sell x fit for the buy box) -> get_business / explain_score /
+check_live_status on the interesting ones -> sba_deal_math for financing scenarios -> save_target.
 
 Always tell the user that scores are directional estimates, that size figures are ranges from 2020-21 PPP
 data, and show the data dates included in responses. Never present stale data as current. Industries with
@@ -123,6 +125,8 @@ def register_tools(server: MCPServer) -> None:
         max_payroll: float | None = None,
         min_score: int | None = None,
         include_unknown_size: bool = True,
+        in_buy_box: bool = False,
+        sort: str = "priority",
         limit: int = 25,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -133,11 +137,17 @@ def register_tools(server: MCPServer) -> None:
         counties: county names (populated for NY and PPP-matched businesses; sparse elsewhere). Size filters use
         estimated employees / annual payroll from PPP data; include_unknown_size keeps businesses with no
         estimate. limit is capped at 50 per call; page with offset/next_offset.
+
+        Each result has three scores: score (likely to sell), buy_score (fit for the user's buy box: industry
+        quality, est. price vs. their range, debt coverage at their rate, cash to close) and priority (both
+        combined). sort: "priority" (default), "sell" or "buy". in_buy_box=true limits results to the buy
+        box's industries and states.
         """
         p = SearchParams(industry=industry, naics_codes=naics_codes, state=state, counties=counties, city=city,
                          name_contains=name_contains, min_years_in_business=min_years_in_business,
                          min_employees=min_employees, max_employees=max_employees, min_payroll=min_payroll,
                          max_payroll=max_payroll, min_score=min_score, include_unknown_size=include_unknown_size,
+                         in_buy_box=in_buy_box, sort=sort if sort in ("priority", "sell", "buy") else "priority",
                          limit=max(1, min(limit, 50)), offset=offset)
         return await _run(lambda ops: ops.search_targets(p))
 
@@ -149,8 +159,38 @@ def register_tools(server: MCPServer) -> None:
 
     @server.tool(annotations=READ)
     async def explain_score(business_id: str) -> dict[str, Any]:
-        """Plain-English breakdown of why a business got its likely-to-sell score, point by point."""
+        """Plain-English breakdown of both scores, point by point: why the owner is (or isn't) likely to sell,
+        and why it is (or isn't) a fit for the user's buy box, with the estimated price, cash flow and debt
+        coverage behind the buy score."""
         return await _run(lambda ops: ops.explain_score(business_id))
+
+    @server.tool(annotations=READ)
+    async def get_buy_box() -> dict[str, Any]:
+        """The user's buy box (what they want to buy): industries, states, price range, cash available,
+        loan rate and term, target multiple, minimum DSCR, salary. Buy scores are measured against it."""
+        return await _run(lambda ops: ops.get_buy_box())
+
+    @server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
+                                             open_world_hint=False))
+    async def set_buy_box(
+        interest_rate_pct: float,
+        industries: list[str] | None = None,
+        states: list[str] | None = None,
+        min_price: float = 500_000,
+        max_price: float = 5_000_000,
+        cash_available: float = 300_000,
+        term_years: int = 10,
+        target_multiple: float | None = None,
+        min_dscr: float = 1.25,
+        buyer_salary: float = 80_000,
+    ) -> dict[str, Any]:
+        """Save the user's buy box. Replaces the whole box, so read it first with get_buy_box and pass
+        every field. Ask the user for anything you don't know, especially interest_rate_pct (their quoted SBA
+        rate) and cash_available (down payment + closing costs they can bring)."""
+        inp = BuyBoxInput(industries=industries or [], states=states or [], min_price=min_price, max_price=max_price,
+                          cash_available=cash_available, interest_rate_pct=interest_rate_pct, term_years=term_years,
+                          target_multiple=target_multiple, min_dscr=min_dscr, buyer_salary=buyer_salary)
+        return await _run(lambda ops: ops.set_buy_box(inp))
 
     @server.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True))
     async def check_live_status(business_id: str) -> dict[str, Any]:

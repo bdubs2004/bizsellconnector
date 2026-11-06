@@ -270,3 +270,11 @@ table { border-collapse: collapse; width: 100%; }
 .live-active { background: var(--good-soft); color: var(--good); }
 .live-delinquent, .live-error, .live-unsupported { background: var(--warn-soft); color: var(--warn); }
 .live-not_found, .live-inactive { background: var(--bad-soft); color: var(--bad); }
+
+/* priority / sell / buy */
+.score-stack { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; }
+.score-sub { font-size: .7rem; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.buy-reason { color: var(--accent); }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 16px; }
+.buybox-form { max-width: 760px; }
+.deal-facts { margin-top: 12px; }

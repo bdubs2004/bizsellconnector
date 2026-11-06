@@ -8,7 +8,10 @@ import psycopg
 
 from ..industries import BY_NAICS
 from ..score import MODEL_VERSION, WEIGHTS, attach_breakdowns
+from ..buy import BASE as BUY_BASE
+from ..buy import BUY_MODEL_VERSION, annotate
 from ..ingest.states import SOURCES as STATE_SOURCES
+from .buybox import describe, get_buy_box
 from .search import BASE_SELECT, DATA_CAVEAT, size_summary, target_summary
 
 SOURCE_LABELS = {
@@ -37,6 +40,8 @@ def get_business(conn: psycopg.Connection, business_id: str, user_id=None, today
     if not row:
         raise NotFound(f"No business with id {business_id!r}")
     attach_breakdowns(conn, [row], today)
+    box = get_buy_box(conn, user_id)
+    annotate([row], box, today)
     summary = target_summary(row, today)
 
     sources = conn.execute(
@@ -77,6 +82,9 @@ def get_business(conn: psycopg.Connection, business_id: str, user_id=None, today
             "source": row.get("naics_source"), "confidence": row.get("naics_confidence"),
         },
         "score_breakdown": row.get("breakdown"),
+        "buy_breakdown": row.get("buy_breakdown"),
+        "deal_estimate_detail": row.get("deal_estimate"),
+        "buy_box_used": describe(box),
         "size_estimates": [
             size_summary({**s, "se_method": s["method"], "se_as_of": s["as_of"]}) for s in sizes
         ],
@@ -104,12 +112,14 @@ def get_business(conn: psycopg.Connection, business_id: str, user_id=None, today
     }
 
 
-def explain_score(conn: psycopg.Connection, business_id: str) -> dict:
+def explain_score(conn: psycopg.Connection, business_id: str, user_id=None) -> dict:
     bid = _uuid(business_id)
-    row = conn.execute("SELECT id, legal_name, score FROM businesses WHERE id = %s", (bid,)).fetchone()
+    row = conn.execute(f"{BASE_SELECT} WHERE b.id = %s", (bid,)).fetchone()
     if not row:
         raise NotFound(f"No business with id {business_id!r}")
     attach_breakdowns(conn, [row])
+    box = get_buy_box(conn, user_id)
+    annotate([row], box)
     if row["score"] is None:
         return {"business_id": str(bid), "name": row["legal_name"], "score": None,
                 "explanation": "This business hasn't been scored yet."}
@@ -137,4 +147,13 @@ def explain_score(conn: psycopg.Connection, business_id: str) -> dict:
             "filings lower it. It's a starting guess that will be retrained on real outcomes."
         ),
         "current_model": MODEL_VERSION,
+        "buy_score": row["buy_score"],
+        "buy_breakdown": row["buy_breakdown"],
+        "buy_explanation": "\n".join(
+            [f"Buy score {row['buy_score']}/100 for your buy box ({BUY_MODEL_VERSION}); starts at {BUY_BASE}."]
+            + [f"{'+' if b['points'] > 0 else ''}{b['points']}: {b['reason']}" if b["points"] else f"(no effect) {b['reason']}"
+               for b in row["buy_breakdown"]]),
+        "deal_estimate": row["deal_estimate"],
+        "priority": row["priority"],
+        "buy_box_used": describe(box),
     }

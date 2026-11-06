@@ -24,6 +24,8 @@ from ..industries import INDUSTRIES
 from ..services import accounts
 from ..services.accounts import PlanError, User
 from ..services.business import NotFound
+from ..buy import industry_options
+from ..services.buybox import BuyBoxInput
 from ..services.deal_math import DealInputs
 from ..services.ops import Ops
 from ..services.search import COUNT_CAP, SearchParams, search_rows, target_summary
@@ -154,13 +156,15 @@ def _int(v: str | None) -> int | None:
 def params_from_query(qp) -> tuple[SearchParams, int, dict]:
     page = max(1, _int(qp.get("page")) or 1)
     form = {k: qp.get(k, "") for k in ("industry", "state", "counties", "city", "name", "min_years", "min_employees",
-                                        "max_employees", "min_score", "sized_only")}
+                                        "max_employees", "min_score", "sized_only", "sort", "in_box")}
+    form["sort"] = form["sort"] if form["sort"] in ("priority", "sell", "buy") else "priority"
     counties = [c.strip() for c in form["counties"].split(",") if c.strip()] or None
     p = SearchParams(
         industry=form["industry"] or None, state=form["state"] or None, counties=counties, city=form["city"] or None,
         name_contains=form["name"] or None, min_years_in_business=_int(form["min_years"]),
         min_employees=_int(form["min_employees"]), max_employees=_int(form["max_employees"]),
         min_score=_int(form["min_score"]), include_unknown_size=not form["sized_only"],
+        sort=form["sort"], in_buy_box=bool(form["in_box"]),
         limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE,
     )
     return p, page, form
@@ -172,12 +176,14 @@ def search_page(request: Request, conn=Depends(db.request_conn), user: User = De
         p, page, form = params_from_query(request.query_params)
     except ValidationError:
         p, page, form = params_from_query({})
+    ops = Ops(conn, user, "web")
     try:
-        result = Ops(conn, user, "web").search_targets(p)
+        result = ops.search_targets(p)
     except PlanError as e:
         return plan_error(request, user, e)
+    box = ops.buy_box()
     qs = {k: v for k, v in form.items() if v}
-    ctx = dict(result=result, form=form, page=page, page_size=PAGE_SIZE,
+    ctx = dict(result=result, form=form, page=page, page_size=PAGE_SIZE, box=box,
                prev_qs=urlencode(qs | {"page": page - 1}) if page > 1 else None,
                next_qs=urlencode(qs | {"page": page + 1}) if result["next_offset"] is not None else None,
                export_qs=urlencode(qs),
@@ -297,7 +303,10 @@ def deal_math_page(request: Request, business_id: str | None = None, conn=Depend
     if business_id:
         row = conn.execute("SELECT legal_name FROM businesses WHERE id::text = %s", (business_id,)).fetchone()
         name = row["legal_name"] if row else None
-    return render(request, "deal_math.html", user, business_name=name, defaults=DEAL_DEFAULTS, form={})
+    # Prefill from query (e.g. the business page's buy-score estimate): ?purchase_price=..&cash_flow=..
+    prefill = {k: v for k, v in request.query_params.items() if k in DealInputs.model_fields and v}
+    form = (DEAL_DEFAULTS | prefill) if prefill else {}
+    return render(request, "deal_math.html", user, business_name=name, defaults=DEAL_DEFAULTS, form=form)
 
 
 @router.post("/deal-math", response_class=HTMLResponse)
@@ -314,6 +323,32 @@ async def deal_math_run(request: Request, conn=Depends(db.request_conn), user: U
         return render(request, "partials/deal_result.html", user, **ctx)
     return render(request, "deal_math.html", user, business_name=None, defaults=DEAL_DEFAULTS,
                   form=form, **ctx)
+
+
+# --- buy box ---------------------------------------------------------------------------
+
+@router.get("/buy-box", response_class=HTMLResponse)
+def buy_box_page(request: Request, saved: str | None = None, conn=Depends(db.request_conn),
+                 user: User = Depends(require_user)):
+    ops = Ops(conn, user, "web")
+    return render(request, "buy_box.html", user, box=ops.buy_box(), options=industry_options(), errors=None,
+                  flash="Saved. Buy scores now use your buy box." if saved else None)
+
+
+@router.post("/buy-box", response_class=HTMLResponse)
+async def buy_box_save(request: Request, conn=Depends(db.request_conn), user: User = Depends(require_user)):
+    form = await request.form()
+    data = {k: v for k, v in form.items() if k not in ("industries", "states") and v != ""}
+    data["industries"] = form.getlist("industries")
+    data["states"] = form.getlist("states")
+    ops = Ops(conn, user, "web")
+    try:
+        ops.set_buy_box(BuyBoxInput(**data))
+    except ValidationError as e:
+        errors = [f"{'.'.join(map(str, err['loc'])) or 'input'}: {err['msg']}" for err in e.errors()]
+        return render(request, "buy_box.html", user, 400, box=ops.buy_box(), options=industry_options(),
+                      errors=errors, flash=None)
+    return RedirectResponse("/buy-box?saved=1", status_code=303)
 
 
 # --- connect your AI / account -------------------------------------------------------

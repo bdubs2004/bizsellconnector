@@ -16,6 +16,7 @@ from ..states_meta import covered_states_text
 from ..services import accounts
 from ..services.accounts import AuthError, PlanError
 from ..services.business import NotFound
+from ..services.buybox import BuyBoxInput
 from ..services.deal_math import DealInputs
 from ..services.ops import Ops
 from ..services.search import SearchParams
@@ -86,6 +87,16 @@ def healthz(conn=Depends(get_conn)):
 @app.get("/v1/me", tags=["account"])
 def me(ops: Ops = Depends(get_ops)):
     return ops.me()
+
+
+@app.get("/v1/buy-box", tags=["account"])
+def get_buy_box(ops: Ops = Depends(get_ops)):
+    return ops.get_buy_box()
+
+
+@app.put("/v1/buy-box", tags=["account"])
+def put_buy_box(body: BuyBoxInput, ops: Ops = Depends(get_ops)):
+    return ops.set_buy_box(body)
 
 
 @app.post("/v1/targets/search", tags=["targets"])

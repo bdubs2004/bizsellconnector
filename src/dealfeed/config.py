@@ -30,6 +30,9 @@ class Settings:
     # Optional Socrata app token: raises the anonymous rate limit on state open-data portals.
     socrata_app_token: str | None = field(default_factory=lambda: _env("SOCRATA_APP_TOKEN"))
 
+    # Default SBA loan rate for buy scores until a user sets their own buy box. An assumption, shown as such.
+    reference_rate_pct: float = field(default_factory=lambda: float(_env("DEALFEED_REFERENCE_RATE", "10.5")))
+
     # Matching thresholds (rapidfuzz token_sort_ratio, 0-100)
     match_auto: float = field(default_factory=lambda: float(_env("DEALFEED_MATCH_AUTO", "92")))
     match_gray: float = field(default_factory=lambda: float(_env("DEALFEED_MATCH_GRAY", "80")))

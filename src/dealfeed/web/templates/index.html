@@ -31,7 +31,7 @@
       <ol class="sample-list">
         {% for t in s.targets %}
         <li>
-          <span class="score score-{{ t.score|score_band }}">{{ t.score }}</span>
+          <span class="score score-{{ t.priority|score_band }}" title="Priority: likely to sell × worth buying (sell {{ t.score }}, buy {{ t.buy_score }})">{{ t.priority }}</span>
           <div>
             <a class="strong" href="/business/{{ t.business_id }}">{{ t.name }}</a>
             <div class="muted small">{{ t.city|title if t.city else '' }}{% if t.state %}, {{ t.state }}{% endif %}{% if t.years_in_business %} · {{ t.years_in_business }} yrs{% endif %}{% if t.size_estimate and t.size_estimate.employees %} · ~{{ t.size_estimate.employees }} employees{% endif %}</div>

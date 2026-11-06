@@ -125,3 +125,11 @@ with our stored name, address and status, and cached per business for 10 minutes
 and the check never raises: a slow state shows "couldn't reach" instead of an error page. It only reports
 and never writes to our tables; the monthly pull stays the single writer. Iowa's data hub can't look up
 one record, so Iowa businesses show their last-pull date instead.
+
+**Buy score and priority** (`buy.py`, `services/buybox.py`). The sell score is a property of the business,
+so it's stored and indexed. The buy score depends on who's buying, so it's computed per request against the
+user's buy box (or labeled defaults). It reuses `services/deal_math.py` on a rough deal: revenue range ×
+industry SDE margin × multiple, all placeholders in `industries.py`. Priority is the geometric mean of the
+two, so a business must score well on both. Search fetches the top 1,000 matches by sell score from the
+index, scores and re-ranks them in Python (milliseconds), and computes sell explanations only for the page
+being shown.

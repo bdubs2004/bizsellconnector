@@ -4,7 +4,10 @@
 <p class="crumbs"><a href="/search">← Search</a></p>
 
 <header class="biz-head">
-  <span class="score score-lg score-{{ b.score|score_band }}" title="Likely-to-sell score">{{ b.score if b.score is not none else '–' }}</span>
+  <div class="score-stack">
+    <span class="score score-lg score-{{ b.priority|score_band }}" title="Priority: likely to sell × fit for your buy box">{{ b.priority if b.priority is not none else '–' }}</span>
+    <span class="score-sub">Sell {{ b.score }} · Buy {{ b.buy_score }}</span>
+  </div>
   <div>
     <h1>{{ b.name }}</h1>
     <p class="muted">
@@ -19,7 +22,7 @@
 <div class="biz-layout">
   <div class="stack-lg">
     <section class="card">
-      <h2 class="h-sm">Why it scored {{ b.score }}</h2>
+      <h2 class="h-sm">Likely to sell: {{ b.score }}</h2>
       <ul class="breakdown">
         {% for s in b.score_breakdown or [] %}
         <li class="{{ 'plus' if s.points > 0 else 'minus' if s.points < 0 else 'zero' }}">
@@ -29,6 +32,31 @@
         {% endfor %}
       </ul>
       <p class="note">Every business starts at 30 points. The score is a directional, rules-based estimate.</p>
+    </section>
+
+    <section class="card">
+      <h2 class="h-sm">Fit for your buy box: {{ b.buy_score }}</h2>
+      {% if b.buy_box_used.is_default %}<p class="muted small">Using default assumptions. <a href="/buy-box">Set your buy box</a> to personalize this.</p>{% endif %}
+      <ul class="breakdown">
+        {% for s in b.buy_breakdown or [] %}
+        <li class="{{ 'plus' if s.points > 0 else 'minus' if s.points < 0 else 'zero' }}">
+          <span class="pts">{% if s.points > 0 %}+{% endif %}{{ s.points if s.points != 0 else '·' }}</span>
+          <span>{{ s.reason }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% set d = b.deal_estimate_detail %}
+      {% if d %}
+      <dl class="facts deal-facts">
+        <div><dt>Est. price</dt><dd>{{ d.price_range[0]|money }}–{{ d.price_range[1]|money }}</dd></div>
+        <div><dt>Est. SDE</dt><dd>{{ d.sde_range[0]|money }}–{{ d.sde_range[1]|money }}</dd></div>
+        <div><dt>Debt coverage</dt><dd>{{ '%.2f'|format(d.dscr) ~ 'x' if d.dscr is not none else '–' }}</dd></div>
+        <div><dt>Cash to close</dt><dd>{{ d.cash_needed|money }}</dd></div>
+      </dl>
+      <p class="note">{{ d.assumptions }} Rough: industry margins and multiples are placeholder benchmarks.
+        <a href="/deal-math?business_id={{ b.business_id }}&purchase_price={{ d.price_mid|int }}&cash_flow={{ d.sde_mid|int }}&interest_rate_pct={{ d.interest_rate_pct }}">Open in deal math</a></p>
+      {% endif %}
+      <p class="note">Every buy score starts at 30. Priority combines both scores, so it's high only when both are.</p>
     </section>
 
     <section class="card">

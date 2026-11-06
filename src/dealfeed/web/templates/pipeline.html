@@ -19,7 +19,7 @@
 {% if data.targets %}
 <div class="table-wrap">
 <table class="targets pipeline">
-  <thead><tr><th>Score</th><th>Business</th><th>Location</th><th>Status and notes</th><th></th></tr></thead>
+  <thead><tr><th>Priority</th><th>Business</th><th>Location</th><th>Status and notes</th><th></th></tr></thead>
   <tbody>
     {% for t in data.targets %}{% include "partials/pipeline_row.html" %}{% endfor %}
   </tbody>

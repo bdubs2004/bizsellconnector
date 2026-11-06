@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from typing import Literal
 
 import psycopg
 from pydantic import BaseModel, Field
@@ -10,10 +11,15 @@ from pydantic import BaseModel, Field
 from ..config import get_settings
 from ..industries import BY_NAICS, resolve_industry
 from ..normalize import normalize_name
+from ..buy import BuyBox, annotate
+from ..industries import BY_SLUG
 from ..score import attach_breakdowns
 from ..states_meta import SUPPORTED_STATES, covered_states_text
 
 COUNT_CAP = 10_000
+# Priority / buy ranking re-ranks this many top candidates by sell score (buy scores are per user, so
+# they can't be indexed; scoring 1,000 rows on the fly takes milliseconds).
+CANDIDATES = 1_000
 
 DATA_CAVEAT = ("Scores are directional, rules-based estimates of likelihood to sell, not predictions. "
                "Size figures are ranges derived from 2020-21 PPP data. Verify before outreach.")
@@ -36,6 +42,10 @@ class SearchParams(BaseModel):
     include_inactive: bool = False
     include_unknown_size: bool = Field(True, description="Include businesses with no size estimate when a size "
                                                          "filter is set")
+    in_buy_box: bool = Field(False, description="Only businesses in your buy box's industries and states")
+    sort: Literal["priority", "sell", "buy"] = Field(
+        "priority", description="priority = likely to sell AND a fit for your buy box (default); sell = likely-to-"
+                                "sell score; buy = fit for your buy box")
     limit: int = Field(25, ge=1, le=50)
     offset: int = Field(0, ge=0)
 
@@ -83,6 +93,11 @@ def target_summary(row: dict, today: date) -> dict:
         "score": row.get("score"),
         "top_reasons": [b["reason"] for b in breakdown if b["points"] != 0][:4],
         "size_estimate": size_summary(row),
+        "buy_score": row.get("buy_score"),
+        "priority": row.get("priority"),
+        "top_buy_reasons": [b["reason"] for b in row.get("buy_breakdown") or [] if b["points"] != 0][:3],
+        "deal_estimate": ({k: row["deal_estimate"][k] for k in ("price_range", "sde_range", "dscr", "cash_needed")}
+                          if row.get("deal_estimate") else None),
         "location": ({"lat": row["latitude"], "lon": row["longitude"]}
                      if row.get("latitude") is not None and row.get("longitude") is not None else None),
         "data_as_of": {
@@ -109,7 +124,7 @@ SIZE_JOIN = """
 """
 
 
-def _where(p: SearchParams) -> tuple[str, dict, dict]:
+def _where(p: SearchParams, box: BuyBox | None = None) -> tuple[str, dict, dict]:
     clauses: list[str] = []
     args: dict = {}
     resolved: dict = {}
@@ -168,20 +183,40 @@ def _where(p: SearchParams) -> tuple[str, dict, dict]:
     if p.min_score is not None:
         clauses.append("b.score >= %(min_score)s")
         args["min_score"] = p.min_score
+    if p.in_buy_box and box:
+        if box.industries:
+            clauses.append("b.naics_code LIKE ANY(%(box_naics)s)")
+            args["box_naics"] = [c + "%" for s in box.industries for c in BY_SLUG[s].naics]
+        if box.states:
+            clauses.append("b.state = ANY(%(box_states)s)")
+            args["box_states"] = box.states
+        resolved["in_buy_box"] = True
     if not p.include_inactive:
         clauses.append("b.status <> 'inactive'")
     return " AND ".join(clauses) or "true", args, resolved
 
 
 def search_rows(conn: psycopg.Connection, p: SearchParams, limit: int, offset: int = 0,
-                count: bool = True) -> tuple[list[dict], int, dict]:
+                count: bool = True, box: BuyBox | None = None) -> tuple[list[dict], int, dict]:
     """Ranked rows plus a match count capped at COUNT_CAP + 1 (counting millions exactly is slow
-    and nobody pages that far; callers show "10,000+")."""
-    where, args, resolved = _where(p)
+    and nobody pages that far; callers show "10,000+").
+
+    sort="sell" pages straight from the index. "priority" and "buy" take the top CANDIDATES by sell score,
+    score them against the buyer's buy box, re-rank, then page."""
+    box = box or BuyBox(is_default=True)
+    where, args, resolved = _where(p, box)
+    resolved["ranking"] = p.sort
     sql = (f"{BASE_SELECT} WHERE {where} "
            "ORDER BY b.score DESC NULLS LAST, b.formation_date ASC NULLS LAST, b.id "
            "LIMIT %(limit)s OFFSET %(offset)s")
-    rows = attach_breakdowns(conn, conn.execute(sql, args | {"limit": limit, "offset": offset}).fetchall())
+    if p.sort == "sell":
+        rows = annotate(conn.execute(sql, args | {"limit": limit, "offset": offset}).fetchall(), box)
+    else:
+        pool = annotate(conn.execute(sql, args | {"limit": CANDIDATES, "offset": 0}).fetchall(), box)
+        key = "priority" if p.sort == "priority" else "buy_score"
+        pool.sort(key=lambda r: (-(r[key] or 0), -(r["score"] or 0)))
+        rows = pool[offset:offset + limit]
+    rows = attach_breakdowns(conn, rows)
     total = 0
     if count:
         total = conn.execute(f"SELECT count(*) AS n FROM (SELECT 1 FROM businesses b {SIZE_JOIN} WHERE {where} "
@@ -189,11 +224,18 @@ def search_rows(conn: psycopg.Connection, p: SearchParams, limit: int, offset: i
     return rows, total, resolved
 
 
-def search_targets(conn: psycopg.Connection, p: SearchParams, limit: int, today: date | None = None) -> dict:
+def search_targets(conn: psycopg.Connection, p: SearchParams, limit: int, today: date | None = None,
+                   box: BuyBox | None = None) -> dict:
     today = today or date.today()
-    rows, total, resolved = search_rows(conn, p, limit, p.offset)
+    box = box or BuyBox(is_default=True)
+    rows, total, resolved = search_rows(conn, p, limit, p.offset, box=box)
     results = [target_summary(r, today) for r in rows]
     notes = [DATA_CAVEAT]
+    if p.sort != "sell":
+        notes.append(f"Ranked by {'priority (sell x buy)' if p.sort == 'priority' else 'buy score'} among the top "
+                     f"{CANDIDATES:,} matches by sell score. Buy scores use "
+                     + ("default assumptions; set your buy box to personalize them." if box.is_default
+                        else "your buy box."))
     if p.state and p.state.strip().upper() not in SUPPORTED_STATES:
         notes.append(f"No data for {p.state.upper()} yet. Covered states: {covered_states_text()}.")
     if limit < p.limit:
@@ -204,7 +246,8 @@ def search_targets(conn: psycopg.Connection, p: SearchParams, limit: int, today:
         "total_matching": min(total, COUNT_CAP),
         "total_is_lower_bound": total > COUNT_CAP,
         "offset": p.offset,
-        "next_offset": p.offset + len(results) if p.offset + len(results) < total else None,
+        "next_offset": (p.offset + len(results)
+                        if p.offset + len(results) < (total if p.sort == "sell" else min(total, CANDIDATES)) else None),
         "filters_applied": resolved,
         "notes": notes,
     }

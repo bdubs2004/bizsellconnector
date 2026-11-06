@@ -16,6 +16,7 @@
       <nav class="nav" aria-label="Main">
         <a href="/search" {% if path.startswith('/search') or path.startswith('/business') %}aria-current="page"{% endif %}>Search</a>
         <a href="/pipeline" {% if path.startswith('/pipeline') %}aria-current="page"{% endif %}>Pipeline</a>
+        <a href="/buy-box" {% if path.startswith('/buy-box') %}aria-current="page"{% endif %}>Buy box</a>
         <a href="/deal-math" {% if path.startswith('/deal-math') %}aria-current="page"{% endif %}>Deal math</a>
         <a href="/connect" {% if path.startswith('/connect') %}aria-current="page"{% endif %}>Connect AI</a>
       </nav>

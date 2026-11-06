@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Buy box{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Your buy box</h1>
+  <p class="muted">What you're looking to buy. Every business gets a buy score measured against this, and search
+    ranks by priority: likely to sell <em>and</em> a fit for you.</p>
+</div>
+{% if flash %}<p class="flash" role="status">{{ flash }}</p>{% endif %}
+{% if box.is_default %}
+{% with kind="info", message="You're on the default buy box (any industry or state, $0.5M–$5M, $300k cash, " ~ box.interest_rate_pct ~ "% rate). Save your own to personalize buy scores." %}{% include "partials/alert.html" %}{% endwith %}
+{% endif %}
+{% if errors %}
+<div class="alert alert-error" role="alert"><strong>Check your inputs</strong>
+  <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
+{% endif %}
+
+<form method="post" action="/buy-box" class="card stack buybox-form">
+  <fieldset>
+    <legend>What</legend>
+    <p class="hint">Leave all unchecked for any industry.</p>
+    <div class="checks">
+      {% for slug, label in options %}
+      <label class="check"><input type="checkbox" name="industries" value="{{ slug }}" {% if slug in box.industries %}checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Where</legend>
+    <p class="hint">Leave all unchecked for every covered state.</p>
+    <div class="checks">
+      {% for code, name in STATE_NAMES.items() %}
+      <label class="check"><input type="checkbox" name="states" value="{{ code }}" {% if code in box.states %}checked{% endif %}> {{ name }}</label>
+      {% endfor %}
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Deal size and money</legend>
+    <div class="row2">
+      <label>Min. price <input type="number" name="min_price" min="0" step="any" value="{{ box.min_price|int }}" required></label>
+      <label>Max. price <input type="number" name="max_price" min="0" step="any" value="{{ box.max_price|int }}" required></label>
+    </div>
+    <div class="row2">
+      <label>Cash you can bring <span class="hint">down payment + closing</span>
+        <input type="number" name="cash_available" min="0" step="any" value="{{ box.cash_available|int }}" required></label>
+      <label>Your salary <span class="hint">paid before debt</span>
+        <input type="number" name="buyer_salary" min="0" step="any" value="{{ box.buyer_salary|int }}" required></label>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Financing</legend>
+    <div class="row2">
+      <label>SBA loan rate % <span class="hint">your quote</span>
+        <input type="number" name="interest_rate_pct" min="0" step="0.01" value="{{ box.interest_rate_pct }}" required></label>
+      <label>Term (years) <input type="number" name="term_years" min="1" max="25" step="1" value="{{ box.term_years }}" required></label>
+    </div>
+    <div class="row2">
+      <label>Target multiple <span class="hint">price / SDE; blank = industry typical</span>
+        <input type="number" name="target_multiple" min="0" step="0.1" value="{{ box.target_multiple if box.target_multiple else '' }}"></label>
+      <label>Lender DSCR minimum <input type="number" name="min_dscr" min="0" step="0.01" value="{{ box.min_dscr }}" required></label>
+    </div>
+  </fieldset>
+  <div class="filter-actions">
+    <button class="btn" type="submit">Save buy box</button>
+    <a class="linkish" href="/search">Back to search</a>
+  </div>
+</form>
+{% endblock %}

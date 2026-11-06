@@ -1,4 +1,7 @@
 {% set r = result %}
+{% if box and box.is_default and form.sort != 'sell' %}
+<div class="alert alert-info">Buy scores use default assumptions ($0.5M–$5M, $300k cash, {{ box.interest_rate_pct }}% rate). <a href="/buy-box">Set your buy box</a> to personalize the ranking.</div>
+{% endif %}
 <div class="results-head">
   <p>
     {% if r.total_matching %}
@@ -18,12 +21,12 @@
 <div class="table-wrap">
 <table class="targets">
   <thead>
-    <tr><th>Score</th><th>Business</th><th>Location</th><th>Years</th><th>Est. size</th><th>Why</th></tr>
+    <tr><th>Priority</th><th>Business</th><th>Location</th><th>Years</th><th>Est. size / price</th><th>Why</th></tr>
   </thead>
   <tbody>
   {% for t in r.results %}
     <tr>
-      <td><span class="score score-{{ t.score|score_band }}">{{ t.score if t.score is not none else '–' }}</span></td>
+      <td>{% with t=t %}{% include "partials/scores.html" %}{% endwith %}</td>
       <td>
         <a class="strong" href="/business/{{ t.business_id }}">{{ t.name }}</a>
         <div class="muted small">{{ t.industry or 'Unclassified' }}{% if t.naics_source == 'rules' %} <span class="tag" title="Industry guessed from the business name">name match</span>{% endif %}</div>
@@ -34,9 +37,11 @@
         {% if t.size_estimate and t.size_estimate.employees %}{{ t.size_estimate.employees }} emp.
         <div class="muted small">PPP {{ t.size_estimate.as_of[:4] if t.size_estimate.as_of else '' }}</div>
         {% else %}<span class="muted">Unknown</span>{% endif %}
+        {% if t.deal_estimate %}<div class="small">~{{ t.deal_estimate.price_range[0]|money }}–{{ t.deal_estimate.price_range[1]|money }}</div>{% endif %}
       </td>
       <td class="why">
-        <ul>{% for reason in t.top_reasons[:2] %}<li>{{ reason }}</li>{% endfor %}</ul>
+        <ul>{% for reason in t.top_reasons[:2] %}<li>{{ reason }}</li>{% endfor %}
+            {% for reason in t.top_buy_reasons[:1] %}<li class="buy-reason">{{ reason }}</li>{% endfor %}</ul>
       </td>
     </tr>
   {% endfor %}

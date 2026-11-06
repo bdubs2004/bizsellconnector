@@ -78,7 +78,7 @@ def test_map_points_json_is_script_safe(web, conn):
 def test_business_page_save_and_pipeline_flow(web, conn):
     bid = biz_id(conn, "Old Mill%")
     page = web.get(f"/business/{bid}")
-    assert page.status_code == 200 and "Why it scored" in page.text
+    assert page.status_code == 200 and "Likely to sell:" in page.text and "Fit for your buy box" in page.text
     r = web.post(f"/business/{bid}/save", data={"status": "researching", "notes": "Ask about succession"}, headers=HX)
     assert 'id="save-box"' in r.text and "Saved" in r.text and "Ask about succession" in r.text
 
