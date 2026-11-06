@@ -92,6 +92,11 @@ def cmd_build(a, conn):
     _print(pipeline.build(conn, rematch=a.rematch, llm_classify_limit=a.llm_classify))
 
 
+def cmd_compact(a, conn):
+    conn.close()
+    _print(db.compact())
+
+
 def cmd_geocode(a, conn):
     _print(geocode.geocode_missing(conn, limit=a.limit))
 
@@ -232,6 +237,8 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=cmd_geocode)
 
     sub.add_parser("stats", help="data metrics").set_defaults(fn=cmd_stats)
+    sub.add_parser("compact", help="return free space to the OS (run after the first full load)").set_defaults(
+        fn=cmd_compact)
 
     p = sub.add_parser("review", help="manual match review queue")
     p.add_argument("action", choices=["list", "accept", "reject"])

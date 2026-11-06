@@ -52,8 +52,13 @@ DBA names. Rows are skipped with a counted reason (nonprofit, foreign, dissolved
 reasons land in `pipeline_runs.notes`. Only *domestic* entities are kept, so a multi-state company appears
 once, in its home state, with its real formation date.
 
-**Scale (~5.6M businesses).** The raw rows aren't copied into Postgres (the downloaded file is the
-archive), only the mapped fields. The spine upserts just the latest pull. Exact matching is a SQL join on
+**Scale (~5.6M businesses).** Raw rows are never copied into Postgres; the downloaded file in
+`DEALFEED_RAW_DIR` is the archive, so reprocess from it if the mapping changes. A registry load writes a
+slim provenance row to `source_records` and stages the mapped fields in `registry_stage`. The build applies
+the stage to `businesses` and empties it, so the database holds one copy of each business, not two.
+Scores are stored as a single number (`businesses.score`). The point-by-point explanation is recomputed by
+`score.explain()` for the rows someone is looking at (same rules, same data). Storing it was about 20% of
+the database. The spine upserts just the latest pull. Exact matching is a SQL join on
 `(core_name, zip)`, and fuzzy matching runs one ZIP3 area at a time. Classification is SQL regexes.
 Scoring is keyset-paged in 20k chunks written back with COPY, and `businesses.score` is denormalized so
 search can use an index per (state, industry). Search counts stop at 10,000 ("10,000+").

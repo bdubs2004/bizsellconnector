@@ -51,7 +51,7 @@ cp .env.example .env && set -a && source .env && set +a
 dealfeed migrate
 dealfeed demo                              # loads tests/fixtures/*, builds, prints a demo API key
 dealfeed serve                             # web app at http://localhost:8000, API docs at /docs
-pytest -q                                  # 64 tests; DROPS the dealfeed_test schema each run
+pytest -q                                  # 66 tests; DROPS the dealfeed_test schema each run
 ```
 
 Try it:
@@ -61,6 +61,28 @@ curl -s -X POST localhost:8000/v1/targets/search \
   -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
   -d '{"industry": "pest control", "min_years_in_business": 20}'
 ```
+
+## Storage
+
+Measured on real data (383k businesses: all of Iowa plus 50k-row slices of the other five states), then
+scaled to the full ~5.6M:
+
+| | 383k measured | 5.6M projected |
+|---|---|---|
+| Before slimming (Nov 2026) | 1,228 MB | ~18 GB |
+| Right after first load + `dealfeed compact` | 297 MB | ~4.4 GB |
+| Steady state with monthly refreshes (flat over 3 simulated months) | 439 MB | ~6.4 GB |
+| SBA PPP / 7(a) / 504 for the six states (estimate, not measured) | | ~1–1.5 GB |
+
+So plan on a database of about **8 GB** with loan data. Why it's that size, and where it went:
+- **One copy of each business.** Registry loads go through `registry_stage`, which the build applies and
+  truncates.
+- **No raw rows in the database.** Downloaded files are the archive.
+- **Scores stored as one number.** Explanations are recomputed when viewed: 30–60 ms for a search page,
+  4 ms for a profile.
+- **Monthly refreshes rewrite only what changed**, plus the pull date and "last seen" bookkeeping. That
+  bookkeeping is why steady state sits about 50% above the compacted size. Postgres reuses that space each
+  month instead of growing.
 
 ## Web app
 
@@ -106,6 +128,7 @@ dealfeed ingest 504 ~/Downloads/foia-504-fy2010-present.csv
 
 # 4. Build: match -> classify -> size -> score (idempotent; re-run any time)
 dealfeed build -v
+dealfeed compact                           # once, after the FIRST full load (gives back ~half the disk)
 dealfeed stats                             # match methods, industry counts, % with size data
 dealfeed review list                       # gray-zone matches waiting for you
 dealfeed review accept 12                  # or: reject 12

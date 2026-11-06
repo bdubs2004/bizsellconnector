@@ -40,11 +40,10 @@ def classify(conn: psycopg.Connection, llm_limit: int = 0) -> dict:
 
     out["from_state_filing"] = conn.execute(
         r"""
-        UPDATE businesses b SET naics_code = sr.canon->>'naics', naics_source = 'state', naics_confidence = 0.8
-          FROM source_records sr
-         WHERE sr.id = b.id AND sr.canon->>'naics' ~ '^\d{6}$'
-           AND (b.naics_source IS NULL OR b.naics_source IN ('rules', 'llm', 'state'))
-           AND (b.naics_code IS DISTINCT FROM sr.canon->>'naics' OR b.naics_source IS DISTINCT FROM 'state')
+        UPDATE businesses SET naics_code = filing_naics, naics_source = 'state', naics_confidence = 0.8
+         WHERE filing_naics ~ '^\d{6}$'
+           AND (naics_source IS NULL OR naics_source IN ('rules', 'llm', 'state'))
+           AND (naics_code IS DISTINCT FROM filing_naics OR naics_source IS DISTINCT FROM 'state')
         """
     ).rowcount
 

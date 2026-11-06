@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 
 from conftest import FIX, biz_id, load_fixtures, reset_db
-from dealfeed import match, pipeline
+from dealfeed import match, pipeline, score
 from dealfeed.ingest import states
 
 
@@ -56,7 +56,7 @@ def test_privacy_rules(fresh):
 def test_ranking_makes_sense(fresh):
     conn, _ = fresh
     s = {r["legal_name"]: r["score"] for r in conn.execute(
-        "SELECT b.legal_name, s.score FROM businesses b JOIN scores s ON s.business_id = b.id")}
+        "SELECT legal_name, score FROM businesses")}
     assert s["Hawkeye Pest Solutions, Inc."] >= 80
     assert s["Cedar Valley Janitorial Services Co"] < 50, "recent change-of-ownership 7(a) must sink the score"
     assert s["River City Cleaning Services LLC"] < 20, "formed 2023"
@@ -103,14 +103,34 @@ def test_second_pull_marks_missing_inactive_and_keeps_ids(fresh, tmp_path):
 
     assert biz_id(conn, "Hawkeye%") == hawkeye_before
     assert conn.execute("SELECT count(*) AS n FROM saved_targets WHERE user_id = %s", (uid,)).fetchone()["n"] == 1
-    row = conn.execute("SELECT b.status, s.score, s.reasons FROM businesses b JOIN scores s ON s.business_id = b.id "
-                       "WHERE legal_name LIKE 'Old Mill%%'").fetchone()
+    row = conn.execute("SELECT id, status FROM businesses WHERE legal_name LIKE 'Old Mill%%'").fetchone()
     assert row["status"] == "inactive"
-    assert any("latest Iowa registry" in r for r in row["reasons"])
+    reasons = [b["reason"] for b in score.explain(conn, [row["id"]])[row["id"]]["breakdown"]]
+    assert any("latest Iowa registry" in r for r in reasons)
     # RA tenure widens across pulls
     ppl = conn.execute("SELECT first_seen, last_seen FROM business_people WHERE business_id = %s",
                        (hawkeye_before,)).fetchone()
     assert str(ppl["first_seen"]) == "2026-10-01" and str(ppl["last_seen"]) == "2026-11-01"
+
+
+def test_storage_is_slim(fresh):
+    conn, _ = fresh
+    assert conn.execute("SELECT count(*) AS n FROM registry_stage").fetchone()["n"] == 0, "build empties the stage"
+    fat = conn.execute("SELECT count(*) AS n FROM source_records WHERE raw <> '{}'::jsonb OR "
+                       "(source NOT IN ('ppp', 'sba_7a', 'sba_504') AND canon <> '{}'::jsonb)").fetchone()["n"]
+    assert fat == 0, "no JSON copies of registry rows and no raw rows in the database"
+    # A rebuild without a new pull must not lose anything (stage is empty, businesses stay as they are)
+    before = conn.execute("SELECT count(*) AS n, sum(score) AS s FROM businesses WHERE status <> 'inactive'").fetchone()
+    pipeline.build(conn)
+    after = conn.execute("SELECT count(*) AS n, sum(score) AS s FROM businesses WHERE status <> 'inactive'").fetchone()
+    assert before == after
+
+
+def test_explanations_match_stored_scores(fresh):
+    conn, _ = fresh
+    rows = conn.execute("SELECT id, score FROM businesses").fetchall()
+    ex = score.explain(conn, [r["id"] for r in rows])
+    assert all(ex[r["id"]]["score"] == r["score"] for r in rows)
 
 
 def test_stats_runs(fresh):

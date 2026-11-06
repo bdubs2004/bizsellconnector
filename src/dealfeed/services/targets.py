@@ -7,6 +7,7 @@ from datetime import date
 
 import psycopg
 
+from ..score import attach_breakdowns
 from .business import NotFound, _uuid
 from .search import BASE_SELECT, SearchParams, search_rows, target_summary
 
@@ -56,7 +57,7 @@ def _saved_rows(conn: psycopg.Connection, user_id, status: str | None, limit: in
     if limit:
         sql += " LIMIT %(limit)s"
         args["limit"] = limit
-    return conn.execute(sql, args).fetchall()
+    return attach_breakdowns(conn, conn.execute(sql, args).fetchall())
 
 
 def list_saved_targets(conn: psycopg.Connection, user_id, status: str | None = None, today: date | None = None) -> dict:

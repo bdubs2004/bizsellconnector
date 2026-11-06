@@ -7,7 +7,7 @@ from datetime import date
 import psycopg
 
 from ..industries import BY_NAICS
-from ..score import MODEL_VERSION, WEIGHTS
+from ..score import MODEL_VERSION, WEIGHTS, attach_breakdowns
 from ..ingest.states import SOURCES as STATE_SOURCES
 from .search import BASE_SELECT, DATA_CAVEAT, size_summary, target_summary
 
@@ -36,6 +36,7 @@ def get_business(conn: psycopg.Connection, business_id: str, user_id=None, today
     row = conn.execute(f"{BASE_SELECT} WHERE b.id = %s", (bid,)).fetchone()
     if not row:
         raise NotFound(f"No business with id {business_id!r}")
+    attach_breakdowns(conn, [row], today)
     summary = target_summary(row, today)
 
     sources = conn.execute(
@@ -105,12 +106,10 @@ def get_business(conn: psycopg.Connection, business_id: str, user_id=None, today
 
 def explain_score(conn: psycopg.Connection, business_id: str) -> dict:
     bid = _uuid(business_id)
-    row = conn.execute(
-        "SELECT b.legal_name, s.score, s.breakdown, s.model_version, s.scored_at FROM businesses b "
-        "LEFT JOIN scores s ON s.business_id = b.id WHERE b.id = %s", (bid,)
-    ).fetchone()
+    row = conn.execute("SELECT id, legal_name, score FROM businesses WHERE id = %s", (bid,)).fetchone()
     if not row:
         raise NotFound(f"No business with id {business_id!r}")
+    attach_breakdowns(conn, [row])
     if row["score"] is None:
         return {"business_id": str(bid), "name": row["legal_name"], "score": None,
                 "explanation": "This business hasn't been scored yet."}
@@ -131,7 +130,7 @@ def explain_score(conn: psycopg.Connection, business_id: str) -> dict:
         "breakdown": bd,
         "explanation": "\n".join(lines),
         "model_version": row["model_version"],
-        "scored_at": row["scored_at"].isoformat(),
+        "scored_at": row["scored_at"].isoformat() if row["scored_at"] else None,
         "how_scoring_works": (
             "A transparent rules-based score. Older businesses, owner-operated signals, and a size that fits "
             "SBA-financed buyers raise it; recent SBA acquisition loans, very young businesses, and inactive "

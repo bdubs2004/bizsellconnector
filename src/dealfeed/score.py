@@ -5,10 +5,9 @@ can be tuned without touching logic; bump MODEL_VERSION when you change them.
 """
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date
 
 import psycopg
 
@@ -175,7 +174,7 @@ def evaluate(biz: dict, size: dict | None, loans: list[dict], people: list[dict]
 ENRICHMENT_SIGNALS = ("stale_website", "no_website")
 CHUNK = 20_000
 
-_CHUNK_SQL = """
+_SELECT = """
 SELECT b.id, b.formation_date, b.status, b.status_since, b.naics_code, b.state,
        se.employees_low, se.employees_high, se.payroll_low, se.payroll_high, se.as_of,
        acq.program, acq.approval_date, acq.business_age_desc,
@@ -189,53 +188,84 @@ SELECT b.id, b.formation_date, b.status, b.status_since, b.naics_code, b.state,
   LEFT JOIN LATERAL (SELECT name, first_seen, last_seen FROM business_people p
                       WHERE p.business_id = b.id AND p.role = 'registered agent'
                       ORDER BY last_seen DESC NULLS LAST LIMIT 1) ra ON true
- WHERE b.id > %(after)s
- ORDER BY b.id
- LIMIT %(limit)s
 """
+_CHUNK_SQL = _SELECT + " WHERE b.id > %(after)s ORDER BY b.id LIMIT %(limit)s"
+_IDS_SQL = _SELECT + " WHERE b.id = ANY(%(ids)s)"
+
+
+def _evaluate_rows(conn: psycopg.Connection, rows: list[dict], today: date) -> dict:
+    """{business_id: (score, [Fired, ...] sorted by impact)} for rows from _SELECT."""
+    ids = [r["id"] for r in rows]
+    extra: dict = {}
+    if ids:
+        for e in conn.execute("SELECT business_id, signal_type, value FROM signals "
+                              "WHERE business_id = ANY(%s) AND signal_type = ANY(%s)",
+                              (ids, list(ENRICHMENT_SIGNALS))).fetchall():
+            extra.setdefault(e["business_id"], {})[e["signal_type"]] = e["value"] or {}
+    out = {}
+    for r in rows:
+        size = r if r["employees_low"] is not None or r["payroll_low"] is not None else None
+        loans = [{"program": r["program"], "approval_date": r["approval_date"],
+                  "business_age_desc": r["business_age_desc"]}] if r["program"] else []
+        people = [{"name": r["ra_name"], "role": "registered agent", "first_seen": r["ra_first_seen"],
+                   "last_seen": r["ra_last_seen"]}] if r["ra_name"] else []
+        score, fired = evaluate(r, size, loans, people, extra.get(r["id"], {}), today)
+        out[r["id"]] = (score, sorted(fired, key=lambda f: -abs(f.points)))
+    return out
+
+
+def explain(conn: psycopg.Connection, ids: list, today: date | None = None) -> dict:
+    """Recompute score + point-by-point breakdown for these businesses. The breakdown isn't stored
+    (that was ~40% of the database); it's the same rules over the same data, so it matches the stored
+    score as of the last build."""
+    if not ids:
+        return {}
+    rows = conn.execute(_IDS_SQL, {"ids": list(ids)}).fetchall()
+    return {bid: {"score": sc, "breakdown": [{"signal": f.signal, "points": f.points, "reason": f.reason}
+                                             for f in fired]}
+            for bid, (sc, fired) in _evaluate_rows(conn, rows, today or date.today()).items()}
+
+
+def last_scored(conn: psycopg.Connection) -> dict | None:
+    return conn.execute("SELECT finished_at AS scored_at, notes AS model_version FROM pipeline_runs "
+                        "WHERE source = 'score' AND status = 'ok' ORDER BY id DESC LIMIT 1").fetchone()
+
+
+def attach_breakdowns(conn: psycopg.Connection, rows: list[dict], today: date | None = None) -> list[dict]:
+    """Add `breakdown`, `scored_at`, `model_version` to business rows (search results, profiles)."""
+    ex = explain(conn, [r["id"] for r in rows], today)
+    meta = last_scored(conn) or {}
+    for r in rows:
+        r["breakdown"] = ex.get(r["id"], {}).get("breakdown", [])
+        r["scored_at"] = meta.get("scored_at")
+        r["model_version"] = meta.get("model_version", MODEL_VERSION)
+    return rows
 
 
 def score_all(conn: psycopg.Connection, today: date | None = None) -> dict:
-    """Score every business in keyset-paged chunks so memory stays flat at ~10M rows.
-    Writes `scores` (with the point-by-point breakdown) and the denormalized businesses.score
-    that search sorts on."""
+    """Score every business in keyset-paged chunks so memory stays flat at millions of rows. Only the
+    number is stored (businesses.score, which search sorts on); explanations are recomputed on view."""
     today = today or date.today()
-    now = datetime.now(timezone.utc)
+    run = conn.execute("INSERT INTO pipeline_runs (source, notes) VALUES ('score', %s) RETURNING id",
+                       (MODEL_VERSION,)).fetchone()["id"]
+    conn.commit()
     after = uuid.UUID(int=0)
     total = 0
     while True:
         rows = conn.execute(_CHUNK_SQL, {"after": after, "limit": CHUNK}).fetchall()
         if not rows:
             break
-        ids = [r["id"] for r in rows]
-        extra: dict = {}
-        for e in conn.execute("SELECT business_id, signal_type, value FROM signals "
-                              "WHERE business_id = ANY(%s) AND signal_type = ANY(%s)",
-                              (ids, list(ENRICHMENT_SIGNALS))).fetchall():
-            extra.setdefault(e["business_id"], {})[e["signal_type"]] = e["value"] or {}
-        conn.execute("CREATE TEMP TABLE IF NOT EXISTS _scores (business_id UUID, score INT, reasons TEXT[], "
-                     "breakdown JSONB) ON COMMIT DROP")
-        with conn.cursor().copy("COPY _scores (business_id, score, reasons, breakdown) FROM STDIN") as cp:
-            for r in rows:
-                size = r if r["employees_low"] is not None or r["payroll_low"] is not None else None
-                loans = [{"program": r["program"], "approval_date": r["approval_date"],
-                          "business_age_desc": r["business_age_desc"]}] if r["program"] else []
-                people = [{"name": r["ra_name"], "role": "registered agent", "first_seen": r["ra_first_seen"],
-                           "last_seen": r["ra_last_seen"]}] if r["ra_name"] else []
-                score, fired = evaluate(r, size, loans, people, extra.get(r["id"], {}), today)
-                ordered = sorted(fired, key=lambda f: -abs(f.points))
-                breakdown = [{"signal": f.signal, "points": f.points, "reason": f.reason} for f in ordered]
-                cp.write_row((r["id"], score, [f.reason for f in ordered], json.dumps(breakdown)))
-        conn.execute(
-            "INSERT INTO scores (business_id, score, reasons, breakdown, model_version, scored_at) "
-            "SELECT business_id, score, reasons, breakdown, %(mv)s, %(now)s FROM _scores "
-            "ON CONFLICT (business_id) DO UPDATE SET score = EXCLUDED.score, reasons = EXCLUDED.reasons, "
-            "breakdown = EXCLUDED.breakdown, model_version = EXCLUDED.model_version, scored_at = EXCLUDED.scored_at",
-            {"mv": MODEL_VERSION, "now": now},
-        )
+        scored = _evaluate_rows(conn, rows, today)
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS _scores (business_id UUID, score INT) ON COMMIT DROP")
+        with conn.cursor().copy("COPY _scores (business_id, score) FROM STDIN") as cp:
+            for bid, (sc, _) in scored.items():
+                cp.write_row((bid, sc))
         conn.execute("UPDATE businesses b SET score = t.score FROM _scores t "
                      "WHERE t.business_id = b.id AND b.score IS DISTINCT FROM t.score")
         conn.commit()
         total += len(rows)
-        after = ids[-1]
+        after = rows[-1]["id"]
+    conn.execute("UPDATE pipeline_runs SET status = 'ok', finished_at = now(), rows_loaded = %s WHERE id = %s",
+                 (total, run))
+    conn.commit()
     return {"scored": total, "model_version": MODEL_VERSION}

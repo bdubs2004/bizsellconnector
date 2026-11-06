@@ -47,9 +47,8 @@ def build_size_estimates(conn: psycopg.Connection) -> dict:
         """
         SELECT DISTINCT ON (l.business_id) l.business_id, l.amount, l.jobs_reported, l.approval_date,
                b.naics_code
-          FROM sba_loans l JOIN source_records sr ON sr.id = l.source_record_id
-          JOIN businesses b ON b.id = l.business_id
-         WHERE l.program = 'ppp' AND l.amount > 0 AND coalesce(sr.canon->>'draw', 'first') = 'first'
+          FROM sba_loans l JOIN businesses b ON b.id = l.business_id
+         WHERE l.program = 'ppp' AND l.amount > 0 AND coalesce(l.draw, 'first') = 'first'
          ORDER BY l.business_id, l.amount DESC
         """
     ).fetchall()

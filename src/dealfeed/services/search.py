@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from ..config import get_settings
 from ..industries import BY_NAICS, resolve_industry
 from ..normalize import normalize_name
+from ..score import attach_breakdowns
 from ..states_meta import SUPPORTED_STATES, covered_states_text
 
 COUNT_CAP = 10_000
@@ -92,12 +93,11 @@ def target_summary(row: dict, today: date) -> dict:
 
 
 BASE_SELECT = """
-SELECT b.*, s.reasons, s.breakdown, s.scored_at, s.model_version,
+SELECT b.*,
        se.employees_low, se.employees_high, se.payroll_low, se.payroll_high, se.revenue_low, se.revenue_high,
        se.method AS se_method, se.as_of AS se_as_of,
        sos.pulled_at AS sos_pulled_at, sos.source AS registry_source
   FROM businesses b
-  LEFT JOIN scores s ON s.business_id = b.id
   LEFT JOIN LATERAL (SELECT * FROM size_estimates x WHERE x.business_id = b.id
                      ORDER BY x.as_of DESC NULLS LAST LIMIT 1) se ON true
   LEFT JOIN source_records sos ON sos.id = b.id
@@ -181,7 +181,7 @@ def search_rows(conn: psycopg.Connection, p: SearchParams, limit: int, offset: i
     sql = (f"{BASE_SELECT} WHERE {where} "
            "ORDER BY b.score DESC NULLS LAST, b.formation_date ASC NULLS LAST, b.id "
            "LIMIT %(limit)s OFFSET %(offset)s")
-    rows = conn.execute(sql, args | {"limit": limit, "offset": offset}).fetchall()
+    rows = attach_breakdowns(conn, conn.execute(sql, args | {"limit": limit, "offset": offset}).fetchall())
     total = 0
     if count:
         total = conn.execute(f"SELECT count(*) AS n FROM (SELECT 1 FROM businesses b {SIZE_JOIN} WHERE {where} "

@@ -130,11 +130,16 @@ def _json_default(o):
 
 
 def load_records(conn: psycopg.Connection, source: str, run_id: int,
-                 records: Iterable[tuple[str, dict, dict]], pulled_at: datetime | None = None) -> int:
+                 records: Iterable[tuple[str, dict, dict]], pulled_at: datetime | None = None,
+                 stage: bool = False) -> int:
     """Bulk upsert into source_records keyed on (source, source_id).
 
     New records get first_seen_at = pulled_at; existing ones keep theirs. Links
     to businesses (business_id, match_method) are preserved on re-load.
+
+    stage=True (state registries): source_records gets only the identity/provenance row and the
+    mapped fields go to registry_stage, which the next build applies to `businesses` and empties.
+    Raw rows are never stored in the database; the downloaded file is the archive.
     """
     pulled_at = pulled_at or datetime.now(timezone.utc)
     conn.execute(
@@ -155,12 +160,18 @@ def load_records(conn: psycopg.Connection, source: str, run_id: int,
     conn.execute(
         """
         INSERT INTO source_records (id, source, source_id, pulled_at, first_seen_at, run_id, canon, raw)
-        SELECT id, %(source)s, source_id, %(pulled)s, %(pulled)s, %(run)s, canon, raw FROM _stage
+        SELECT id, %(source)s, source_id, %(pulled)s, %(pulled)s, %(run)s,
+               CASE WHEN %(stage)s THEN '{}'::jsonb ELSE canon END, '{}'::jsonb FROM _stage
         ON CONFLICT (source, source_id) DO UPDATE
-           SET pulled_at = EXCLUDED.pulled_at, run_id = EXCLUDED.run_id,
-               canon = EXCLUDED.canon, raw = EXCLUDED.raw
+           SET pulled_at = EXCLUDED.pulled_at, run_id = EXCLUDED.run_id, canon = EXCLUDED.canon, raw = '{}'::jsonb
         """,
-        {"source": source, "pulled": pulled_at, "run": run_id},
+        {"source": source, "pulled": pulled_at, "run": run_id, "stage": stage},
     )
+    if stage:
+        conn.execute(
+            "INSERT INTO registry_stage (id, run_id, canon) SELECT id, %(run)s, canon FROM _stage "
+            "ON CONFLICT (id) DO UPDATE SET run_id = EXCLUDED.run_id, canon = EXCLUDED.canon",
+            {"run": run_id},
+        )
     conn.commit()
     return n

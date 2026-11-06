@@ -36,6 +36,25 @@ def request_conn() -> Iterator[psycopg.Connection]:
         conn.close()
 
 
+COMPACT_TABLES = ("businesses", "source_records", "business_people", "registry_stage", "sba_loans",
+                  "size_estimates")
+
+
+def compact(url: str | None = None) -> dict:
+    """VACUUM FULL + ANALYZE the big tables, returning space to the OS. Locks each table while it runs
+    (seconds to minutes), so run it after a load, not while users are searching. Needed after the
+    first full load (every row is written twice: insert, then score); monthly pulls only touch changed rows."""
+    conn = psycopg.connect(url or get_settings().database_url, autocommit=True, row_factory=dict_row)
+    try:
+        before = conn.execute("SELECT pg_database_size(current_database()) AS b").fetchone()["b"]
+        for t in COMPACT_TABLES:
+            conn.execute(f"VACUUM (FULL, ANALYZE) {t}")
+        after = conn.execute("SELECT pg_database_size(current_database()) AS b").fetchone()["b"]
+        return {"before_mb": round(before / 2**20), "after_mb": round(after / 2**20)}
+    finally:
+        conn.close()
+
+
 def migrate(conn: psycopg.Connection) -> list[str]:
     """Apply every migrations/*.sql file not yet applied. Returns names applied."""
     conn.execute(

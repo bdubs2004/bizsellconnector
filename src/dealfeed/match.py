@@ -40,25 +40,26 @@ def _latest_runs(conn: psycopg.Connection) -> dict[str, int]:
 
 
 def build_spine(conn: psycopg.Connection) -> dict:
-    """Upsert businesses from the latest pull of every state registry; mark entities missing
-    from their state's latest pull inactive."""
+    """Apply staged registry rows (from the latest pull of each state) to `businesses`, mark entities
+    missing from their state's latest pull inactive, then empty the stage."""
     latest = _latest_runs(conn)
     if not latest:
         return {"note": "no state registry loaded yet"}
     runs = list(latest.values())
-    conn.execute(
+    applied = conn.execute(
         """
         INSERT INTO businesses (id, legal_name, normalized_name, core_name, dba_names, entity_type, state_of_formation,
                                 formation_date, status, status_since, address_line1, address_kind, city, state, zip,
-                                county, latitude, longitude, primary_source, updated_at)
-        SELECT sr.id, c->>'legal_name', c->>'normalized_name', c->>'core_name',
+                                county, latitude, longitude, filing_naics, primary_source, updated_at)
+        SELECT st.id, c->>'legal_name', c->>'normalized_name', c->>'core_name',
                ARRAY(SELECT jsonb_array_elements_text(coalesce(c->'dba_names', '[]'))),
                c->>'entity_type', c->>'registry_state', (c->>'formation_date')::date,
                coalesce(c->>'status', 'active'), (c->>'status_since')::date,
                c->>'address_line1', c->>'address_kind', c->>'city', c->>'registry_state', c->>'zip5',
-               c->>'county', (c->>'latitude')::real, (c->>'longitude')::real, sr.source, now()
-          FROM source_records sr, LATERAL (SELECT sr.canon AS c) x
-         WHERE sr.run_id = ANY(%(runs)s)
+               c->>'county', (c->>'latitude')::real, (c->>'longitude')::real, c->>'naics', sr.source, now()
+          FROM registry_stage st JOIN source_records sr ON sr.id = st.id,
+               LATERAL (SELECT st.canon AS c) x
+         WHERE st.run_id = ANY(%(runs)s)
         ON CONFLICT (id) DO UPDATE SET
             legal_name = EXCLUDED.legal_name, normalized_name = EXCLUDED.normalized_name,
             core_name = EXCLUDED.core_name, dba_names = EXCLUDED.dba_names, entity_type = EXCLUDED.entity_type,
@@ -70,10 +71,22 @@ def build_spine(conn: psycopg.Connection) -> dict:
             county = coalesce(EXCLUDED.county, businesses.county),
             latitude = coalesce(EXCLUDED.latitude, businesses.latitude),
             longitude = coalesce(EXCLUDED.longitude, businesses.longitude),
+            filing_naics = EXCLUDED.filing_naics,
             updated_at = now()
+        -- Skip rows that didn't change: a monthly pull is mostly identical, and rewriting millions of
+        -- unchanged rows would leave that much dead space behind until vacuum.
+        WHERE (businesses.legal_name, businesses.dba_names, businesses.entity_type, businesses.formation_date,
+               businesses.status, businesses.status_since, businesses.address_line1, businesses.address_kind,
+               businesses.city, businesses.state, businesses.zip, businesses.filing_naics)
+              IS DISTINCT FROM
+              (EXCLUDED.legal_name, EXCLUDED.dba_names, EXCLUDED.entity_type, EXCLUDED.formation_date,
+               EXCLUDED.status, EXCLUDED.status_since, EXCLUDED.address_line1, EXCLUDED.address_kind,
+               EXCLUDED.city, EXCLUDED.state, EXCLUDED.zip, EXCLUDED.filing_naics)
+           OR (EXCLUDED.county IS NOT NULL AND businesses.county IS DISTINCT FROM EXCLUDED.county)
+           OR (EXCLUDED.latitude IS NOT NULL AND businesses.latitude IS DISTINCT FROM EXCLUDED.latitude)
         """,
         {"runs": runs},
-    )
+    ).rowcount
     gone = conn.execute(
         """
         UPDATE businesses b SET status = 'inactive', updated_at = now()
@@ -92,17 +105,22 @@ def build_spine(conn: psycopg.Connection) -> dict:
     # the "same agent for 15+ years" signal will eventually rely on.
     conn.execute(
         """
-        INSERT INTO business_people (id, business_id, name, role, first_seen, last_seen, source)
-        SELECT md5(sr.id::text || (p->>'name') || (p->>'role'))::uuid, sr.id, p->>'name', p->>'role',
-               sr.first_seen_at::date, sr.pulled_at::date, sr.source
-          FROM source_records sr, jsonb_array_elements(coalesce(sr.canon->'people', '[]')) p
-         WHERE sr.run_id = ANY(%(runs)s)
+        INSERT INTO business_people (business_id, name, role, first_seen, last_seen, source)
+        SELECT sr.id, p->>'name', p->>'role', sr.first_seen_at::date, sr.pulled_at::date, sr.source
+          FROM registry_stage st JOIN source_records sr ON sr.id = st.id,
+               jsonb_array_elements(coalesce(st.canon->'people', '[]')) p
+         WHERE st.run_id = ANY(%(runs)s)
         ON CONFLICT (business_id, name, role, source) DO UPDATE
            SET last_seen = greatest(business_people.last_seen, EXCLUDED.last_seen),
                first_seen = least(business_people.first_seen, EXCLUDED.first_seen)
+         WHERE business_people.last_seen IS DISTINCT FROM greatest(business_people.last_seen, EXCLUDED.last_seen)
+            OR business_people.first_seen IS DISTINCT FROM least(business_people.first_seen, EXCLUDED.first_seen)
         """,
         {"runs": runs},
     )
+    # Applied (or superseded by a newer pull of the same state): the stage is emptied either way.
+    # TRUNCATE, not DELETE, so the space goes back to the OS instead of sitting in the table.
+    conn.execute("TRUNCATE registry_stage")
     counts = conn.execute(
         "SELECT state, count(*) FILTER (WHERE status = 'active') AS active, "
         "count(*) FILTER (WHERE status = 'delinquent') AS delinquent, "
@@ -112,7 +130,7 @@ def build_spine(conn: psycopg.Connection) -> dict:
     ).fetchall()
     conn.commit()
     return {"by_state": {r["state"]: {k: r[k] for k in ("active", "delinquent", "inactive")} for r in counts},
-            "marked_inactive_this_build": gone}
+            "marked_inactive_this_build": gone, "applied_from_stage": applied}
 
 
 # --- loan linking ------------------------------------------------------------------------------

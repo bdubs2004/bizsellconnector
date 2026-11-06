@@ -1,4 +1,5 @@
 """Multi-state registry loading, filters, and cross-state search."""
+import uuid
 import zipfile
 from collections import Counter
 from datetime import date
@@ -7,6 +8,7 @@ import httpx
 import pytest
 
 from conftest import FIX, biz_id
+from dealfeed import score
 from dealfeed.classify import pg_regex
 from dealfeed.ingest import states
 from dealfeed.services import search
@@ -150,9 +152,9 @@ def test_cross_state_search_and_market(conn):
 
 
 def test_delinquent_penalized_with_reason(conn):
-    r = conn.execute("SELECT s.score, s.reasons FROM scores s JOIN businesses b ON b.id = s.business_id "
-                     "WHERE b.legal_name = 'FRONT RANGE JANITORIAL LLC'").fetchone()
-    assert any("Behind on Colorado filings since 2021" in x for x in r["reasons"])
+    bid = biz_id(conn, "FRONT RANGE JANITORIAL LLC")
+    reasons = [b["reason"] for b in score.explain(conn, [bid])[uuid.UUID(bid)]["breakdown"]]
+    assert any("Behind on Colorado filings since 2021" in x for x in reasons)
 
 
 def test_dba_names_on_business(conn):

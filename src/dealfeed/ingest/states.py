@@ -630,15 +630,15 @@ def map_file(src: StateSource, path: Path, cutoff: date | None, skipped: Counter
 
 def load(conn: psycopg.Connection, key: str, path: Path, pulled_at: datetime | None = None,
          min_age_years: int | None = None) -> dict:
-    """Load one state's file into source_records. The raw file itself is the archive; rows aren't
-    stored raw in the database (millions of rows), only the mapped `canon` fields."""
+    """Stage one state's file for the next build. The raw file itself is the archive; the database keeps
+    a slim provenance row per entity in source_records and the business row the build produces."""
     src = get_source(key)
     cutoff = min_age_cutoff(min_age_years)
     run_id = start_run(conn, src.key, path)
     skipped: Counter = Counter()
     try:
         loaded = load_records(conn, src.key, run_id, map_file(src, path, cutoff, skipped),
-                              pulled_at or datetime.now(timezone.utc))
+                              pulled_at or datetime.now(timezone.utc), stage=True)
         notes = "skipped: " + ", ".join(f"{k} {v:,}" for k, v in skipped.most_common()) if skipped else None
         if cutoff:
             notes = f"min formation cutoff {cutoff}; " + (notes or "")

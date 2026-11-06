@@ -112,16 +112,16 @@ def _insert_loans(conn: psycopg.Connection, source: str, program: str, ids: list
     conn.execute(
         """
         INSERT INTO sba_loans (id, source_record_id, program, amount, approval_date, lender, status,
-                               jobs_reported, naics_code, business_age_desc, county, state)
+                               jobs_reported, naics_code, business_age_desc, county, state, draw)
         SELECT sr.id, sr.id, %(program)s, (sr.canon->>'amount')::numeric, (sr.canon->>'approval_date')::date,
                sr.canon->>'lender', sr.canon->>'status', (sr.canon->>'jobs')::int, sr.canon->>'naics',
-               sr.canon->>'business_age_desc', sr.canon->>'county', sr.canon->>'state'
+               sr.canon->>'business_age_desc', sr.canon->>'county', sr.canon->>'state', sr.canon->>'draw'
           FROM source_records sr
          WHERE sr.source = %(source)s AND sr.source_id = ANY(%(ids)s)
         ON CONFLICT (source_record_id) DO UPDATE
            SET amount = EXCLUDED.amount, approval_date = EXCLUDED.approval_date, lender = EXCLUDED.lender,
                status = EXCLUDED.status, jobs_reported = EXCLUDED.jobs_reported, naics_code = EXCLUDED.naics_code,
-               business_age_desc = EXCLUDED.business_age_desc, county = EXCLUDED.county
+               business_age_desc = EXCLUDED.business_age_desc, county = EXCLUDED.county, draw = EXCLUDED.draw
         """,
         {"program": program, "source": source, "ids": ids},
     )
@@ -154,7 +154,7 @@ def load_ppp(conn: psycopg.Connection, path: Path, states: list[str] | None = No
             canon["program"] = "ppp"
             canon["draw"] = "second" if (g("processing_method") or "").upper() == "PPS" else "first"
             canon["forgiveness_amount"] = nz.parse_money(g("forgiveness_amount"))
-            records.append((g("loan_number"), canon, {k: v for k, v in row.items() if k not in dropped}))
+            records.append((g("loan_number"), canon, {}))
         loaded = load_records(conn, "ppp", run_id, records, pulled_at or datetime.now(timezone.utc))
         _insert_loans(conn, "ppp", "ppp", [r[0] for r in records])
         finish_run(conn, run_id, "ok", rows_read=df.height, rows_loaded=loaded,
@@ -191,7 +191,7 @@ def load_sba(conn: psycopg.Connection, path: Path, program: str, states: list[st
             # FOIA 7(a)/504 rows carry no loan number; build a stable synthetic key.
             key = "|".join(str(canon.get(k)) for k in ("normalized_name", "zip5", "approval_date", "amount"))
             source_id = hashlib.sha1(key.encode()).hexdigest()[:20]
-            records.append((source_id, canon, row))
+            records.append((source_id, canon, {}))
         loaded = load_records(conn, source, run_id, records, pulled_at or datetime.now(timezone.utc))
         _insert_loans(conn, source, program, [r[0] for r in records])
         finish_run(conn, run_id, "ok", rows_read=df.height, rows_loaded=loaded)
