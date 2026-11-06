@@ -36,7 +36,7 @@ def _uuid(business_id: str) -> uuid.UUID:
 def get_business(conn: psycopg.Connection, business_id: str, user_id=None, today: date | None = None) -> dict:
     today = today or date.today()
     bid = _uuid(business_id)
-    row = conn.execute(f"{BASE_SELECT} WHERE b.id = %s", (bid,)).fetchone()
+    row = conn.execute(f"{BASE_SELECT} WHERE b.id = %s AND NOT b.suppressed", (bid,)).fetchone()
     if not row:
         raise NotFound(f"No business with id {business_id!r}")
     attach_breakdowns(conn, [row], today)
@@ -114,7 +114,7 @@ def get_business(conn: psycopg.Connection, business_id: str, user_id=None, today
 
 def explain_score(conn: psycopg.Connection, business_id: str, user_id=None) -> dict:
     bid = _uuid(business_id)
-    row = conn.execute(f"{BASE_SELECT} WHERE b.id = %s", (bid,)).fetchone()
+    row = conn.execute(f"{BASE_SELECT} WHERE b.id = %s AND NOT b.suppressed", (bid,)).fetchone()
     if not row:
         raise NotFound(f"No business with id {business_id!r}")
     attach_breakdowns(conn, [row])

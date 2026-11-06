@@ -89,8 +89,9 @@
       </ul>
       {% if dev_auth %}
       <form method="post" action="/connect/plan" class="stack dev-only">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>Switch plan <span class="hint">dev only, until billing exists</span>
-          <select name="plan" onchange="this.form.submit()">
+          <select name="plan" data-autosubmit>
             {% for name in plans %}<option value="{{ name }}" {% if name == usage.plan %}selected{% endif %}>{{ name }}</option>{% endfor %}
           </select>
         </label>
@@ -102,6 +103,7 @@
     <section class="card">
       <h2 class="h-sm">API keys</h2>
       <form method="post" action="/connect/keys" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input name="label" placeholder="Label, e.g. Claude Code" maxlength="60" aria-label="Key label">
         <button class="btn btn-sm" type="submit">Create key</button>
       </form>
@@ -112,7 +114,8 @@
           <code>{{ k.key_prefix }}…</code>
           <span class="muted small">{{ k.label or 'No label' }} · {{ k.created_at.date() }}{% if k.revoked_at %} · revoked{% endif %}</span>
           {% if not k.revoked_at %}
-          <form method="post" action="/connect/keys/{{ k.id }}/revoke"><button class="linkish danger" type="submit">Revoke</button></form>
+          <form method="post" action="/connect/keys/{{ k.id }}/revoke">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="linkish danger" type="submit">Revoke</button></form>
           {% endif %}
         </li>
         {% endfor %}
@@ -125,15 +128,5 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script>
-  document.addEventListener("click", function (e) {
-    var b = e.target.closest("[data-copy]");
-    if (!b) return;
-    var el = document.getElementById(b.dataset.copy);
-    if (!el || !navigator.clipboard) return;
-    navigator.clipboard.writeText(el.textContent.trim()).then(function () {
-      var t = b.textContent; b.textContent = "Copied"; setTimeout(function () { b.textContent = t; }, 1500);
-    });
-  });
-</script>
+<script src="/static/connect.js"></script>
 {% endblock %}

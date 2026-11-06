@@ -54,7 +54,7 @@ def check_business(conn: psycopg.Connection, business_id: str) -> dict:
     b = conn.execute(
         "SELECT b.id, b.legal_name, b.status, b.address_line1, b.state, b.primary_source, "
         "       sr.source_id, sr.pulled_at "
-        "  FROM businesses b LEFT JOIN source_records sr ON sr.id = b.id WHERE b.id = %s", (bid,)
+        "  FROM businesses b LEFT JOIN source_records sr ON sr.id = b.id WHERE b.id = %s AND NOT b.suppressed", (bid,)
     ).fetchone()
     if not b:
         raise NotFound(f"No business with id {business_id!r}")

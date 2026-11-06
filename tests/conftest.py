@@ -4,6 +4,7 @@ Set DEALFEED_TEST_DATABASE_URL to point somewhere else; the default is a local
 `dealfeed_test` database. Its schema is DROPPED on every run.
 """
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -52,6 +53,28 @@ def built():
 @pytest.fixture
 def conn(built):
     return built[0]
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    from dealfeed import security
+    security.limiter.reset()
+    yield
+
+
+def page_csrf(client, path: str = "/login") -> str:
+    html = client.get(path).text
+    m = re.search(r'name="csrf_token" value="([^"]+)"', html) or re.search(r'"X-CSRF-Token": "([^"]+)"', html)
+    return m.group(1)
+
+
+def web_login(client, email: str, next_url: str = "/search"):
+    """Sign in like a browser: take the CSRF token from the login form, then attach the new session's token
+    to every later request (as HTMX does via <body hx-headers>)."""
+    r = client.post("/login", data={"email": email, "next": next_url, "csrf_token": page_csrf(client)},
+                    follow_redirects=False)
+    client.headers["X-CSRF-Token"] = page_csrf(client, "/privacy")
+    return r
 
 
 def biz_id(conn, name_like: str) -> str:

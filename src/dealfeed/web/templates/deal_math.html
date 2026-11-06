@@ -15,6 +15,7 @@
 <div class="deal-layout">
   <form class="card stack" method="post" action="/deal-math"
         hx-post="/deal-math" hx-target="#deal-result" hx-swap="innerHTML">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <fieldset>
       <legend>The deal</legend>
       <div class="row2">
@@ -73,13 +74,5 @@
 </div>
 {% endblock %}
 {% block scripts %}
-<script>
-  (function () {
-    var m = document.getElementById("multiple");
-    var cf = document.querySelector("[name=cash_flow]");
-    var price = document.querySelector("[name=purchase_price]");
-    function fill() { var x = parseFloat(m.value), c = parseFloat(cf.value); if (x > 0 && c > 0) price.value = Math.round(x * c); }
-    m.addEventListener("input", fill); cf.addEventListener("input", fill);
-  })();
-</script>
+<script src="/static/deal_math.js"></script>
 {% endblock %}

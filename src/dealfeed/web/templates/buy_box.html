@@ -16,6 +16,7 @@
 {% endif %}
 
 <form method="post" action="/buy-box" class="card stack buybox-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <fieldset>
     <legend>What</legend>
     <p class="hint">Leave all unchecked for any industry.</p>

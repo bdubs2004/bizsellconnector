@@ -17,15 +17,17 @@ class Plan:
     mcp: bool
     export: bool
     max_export_rows: int
+    rows_per_day: int             # anti-scraping: nobody needs their whole month in one day
 
 
 PLANS = {
-    "free": Plan("free", rows_per_month=50, max_per_call=10, mcp=False, export=False, max_export_rows=0),
-    "searcher": Plan("searcher", rows_per_month=1_000, max_per_call=50, mcp=True, export=True, max_export_rows=500),
-    "fund": Plan("fund", rows_per_month=5_000, max_per_call=50, mcp=True, export=True, max_export_rows=2_000),
-    # Usage-billed; the cap is an abuse ceiling, not a product limit.
-    "api": Plan("api", rows_per_month=100_000, max_per_call=50, mcp=True, export=True, max_export_rows=5_000),
+    "free": Plan("free", 50, 10, mcp=False, export=False, max_export_rows=0, rows_per_day=50),
+    "searcher": Plan("searcher", 1_000, 50, mcp=True, export=True, max_export_rows=500, rows_per_day=400),
+    "fund": Plan("fund", 5_000, 50, mcp=True, export=True, max_export_rows=2_000, rows_per_day=1_500),
+    # Usage-billed; the caps are abuse ceilings, not product limits.
+    "api": Plan("api", 100_000, 50, mcp=True, export=True, max_export_rows=5_000, rows_per_day=20_000),
 }
+MAX_ACTIVE_KEYS = 5
 
 
 class AuthError(Exception):
@@ -71,6 +73,10 @@ def get_user(conn: psycopg.Connection, user_id: uuid.UUID | str) -> User | None:
 
 def create_api_key(conn: psycopg.Connection, user: User, label: str | None = None) -> str:
     """Returns the plaintext key. It is shown once and only its hash is stored."""
+    active = conn.execute("SELECT count(*) AS n FROM api_keys WHERE user_id = %s AND revoked_at IS NULL",
+                          (user.id,)).fetchone()["n"]
+    if active >= MAX_ACTIVE_KEYS:
+        raise PlanError(f"You already have {MAX_ACTIVE_KEYS} active API keys. Revoke one first.")
     key = "dfk_" + secrets.token_urlsafe(32)
     conn.execute(
         "INSERT INTO api_keys (id, user_id, key_prefix, key_hash, label) VALUES (%s, %s, %s, %s, %s)",
@@ -88,6 +94,9 @@ def user_for_api_key(conn: psycopg.Connection, key: str) -> User:
     ).fetchone()
     if not row:
         raise AuthError("invalid or revoked API key")
+    conn.execute("UPDATE api_keys SET last_used_at = now() WHERE key_hash = %s "
+                 "AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')", (_hash(key),))
+    conn.commit()
     return User(row["id"], row["email"], PLANS[row["plan"]])
 
 
@@ -130,9 +139,19 @@ def rows_used_this_month(conn: psycopg.Connection, user: User) -> int:
     ).fetchone()["n"]
 
 
+def rows_used_today(conn: psycopg.Connection, user: User) -> int:
+    return conn.execute(
+        "SELECT coalesce(sum(rows_returned), 0) AS n FROM api_usage "
+        "WHERE user_id = %s AND called_at >= date_trunc('day', now())", (user.id,)).fetchone()["n"]
+
+
 def allowed_rows(conn: psycopg.Connection, user: User, requested: int) -> int:
-    """How many rows this call may return given per-call and monthly limits. Raises if zero."""
+    """How many rows this call may return given per-call, daily and monthly limits. Raises if zero."""
     n = max(1, min(requested, user.plan.max_per_call))
+    day_left = user.plan.rows_per_day - rows_used_today(conn, user)
+    if day_left <= 0:
+        raise PlanError(f"Daily row limit reached ({user.plan.rows_per_day} rows). Resets at midnight UTC.")
+    n = min(n, day_left)
     if user.plan.rows_per_month is not None:
         remaining = user.plan.rows_per_month - rows_used_this_month(conn, user)
         if remaining <= 0:
@@ -156,6 +175,8 @@ def usage_summary(conn: psycopg.Connection, user: User) -> dict:
         "rows_used_this_month": used,
         "rows_per_month": user.plan.rows_per_month,
         "max_rows_per_call": user.plan.max_per_call,
+        "rows_used_today": rows_used_today(conn, user),
+        "rows_per_day": user.plan.rows_per_day,
         "mcp_enabled": user.plan.mcp,
         "exports_enabled": user.plan.export,
     }

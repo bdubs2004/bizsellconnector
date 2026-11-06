@@ -8,6 +8,7 @@
   <td>
     <form method="post" action="/pipeline/{{ t.business_id }}" class="row-form"
           hx-post="/pipeline/{{ t.business_id }}" hx-target="closest tr" hx-swap="outerHTML" hx-trigger="change, submit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <select name="status" aria-label="Status for {{ t.name }}">
         {% for s in STATUSES %}<option value="{{ s }}" {% if t.pipeline_status == s %}selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
       </select>
@@ -20,6 +21,7 @@
     <form method="post" action="/business/{{ t.business_id }}/remove"
           hx-post="/business/{{ t.business_id }}/remove" hx-target="closest tr" hx-swap="outerHTML"
           hx-confirm="Remove {{ t.name }} from your pipeline?">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="linkish danger" type="submit" aria-label="Remove {{ t.name }}">Remove</button>
     </form>
   </td>

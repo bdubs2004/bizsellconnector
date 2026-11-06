@@ -3,7 +3,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import biz_id
+from conftest import biz_id, web_login
 from dealfeed.api.app import app
 from dealfeed.ingest import states
 from dealfeed.services import live
@@ -107,7 +107,7 @@ def test_web_and_api_and_mcp(conn, monkeypatch, built):
         "raw_status": {"entitystatus": "Voluntarily Dissolved"}, "record": None}, []))
     bid = biz_id(conn, "ROCKY MOUNTAIN PEST%")
     c = TestClient(app)
-    c.post("/login", data={"email": "live@example.com"})
+    web_login(c, "live@example.com")
     page = c.get(f"/business/{bid}")
     assert "Check with the state now" in page.text
     part = c.get(f"/business/{bid}/live", headers={"HX-Request": "true"})

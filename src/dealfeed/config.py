@@ -47,6 +47,12 @@ class Settings:
     session_secret: str | None = field(default_factory=lambda: _env("DEALFEED_SESSION_SECRET"))
     dev_signup_plan: str = field(default_factory=lambda: _env("DEALFEED_DEV_SIGNUP_PLAN", "searcher"))
 
+    # Reverse proxies whose X-Forwarded-For we trust (comma-separated IPs). Default: only localhost.
+    trusted_proxies: str = field(default_factory=lambda: _env("DEALFEED_TRUSTED_PROXIES", "127.0.0.1"))
+
+    # Business contact shown on the privacy / removal-request page. Use a business address, never a personal one.
+    contact_email: str = field(default_factory=lambda: _env("DEALFEED_CONTACT_EMAIL", "privacy@example.com"))
+
     # Public URL of the MCP server (used for OAuth metadata when hosted)
     public_url: str = field(default_factory=lambda: _env("DEALFEED_PUBLIC_URL", "http://localhost:8001"))
 

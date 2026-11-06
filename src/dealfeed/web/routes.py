@@ -8,6 +8,7 @@ limits and metering match the API and MCP server.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlencode
@@ -18,7 +19,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
-from .. import db
+
+from .. import db, security
 from ..config import get_settings
 from ..industries import INDUSTRIES
 from ..services import accounts
@@ -35,7 +37,23 @@ from . import auth
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=HERE / "templates")
-router = APIRouter(include_in_schema=False)
+class CSRFError(Exception):
+    pass
+
+
+async def csrf_protect(request: Request) -> None:
+    """Every state-changing web request must carry this session's CSRF token, as the X-CSRF-Token header
+    (HTMX, set on <body>) or a csrf_token form field. Blocks other sites from acting as a signed-in user."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    submitted = request.headers.get("X-CSRF-Token")
+    if not submitted and "form" in request.headers.get("content-type", ""):
+        submitted = (await request.form()).get("csrf_token")
+    if not security.csrf_ok(request, submitted):
+        raise CSRFError()
+
+
+router = APIRouter(include_in_schema=False, dependencies=[Depends(csrf_protect)])
 PAGE_SIZE = 25
 
 
@@ -66,7 +84,8 @@ templates.env.globals["COUNT_CAP"] = COUNT_CAP
 
 
 def render(request: Request, name: str, user: User | None, status_code: int = 200, **ctx) -> HTMLResponse:
-    ctx |= {"user": user, "dev_auth": auth.dev_login_allowed(), "path": request.url.path}
+    ctx |= {"user": user, "dev_auth": auth.dev_login_allowed(), "path": request.url.path,
+            "csrf_token": security.csrf_token(request)}
     return templates.TemplateResponse(request, name, ctx, status_code=status_code)
 
 
@@ -93,6 +112,7 @@ def require_user(request: Request, conn: psycopg.Connection = Depends(db.request
     user = auth.current_user(request, conn)
     if not user:
         raise LoginRequired(str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""))
+    security.limiter.hit("web", str(user.id))
     return user
 
 
@@ -115,6 +135,11 @@ def index(request: Request, conn=Depends(db.request_conn), user=Depends(get_user
     return render(request, "index.html", user, samples=samples)
 
 
+@router.get("/privacy", response_class=HTMLResponse)
+def privacy(request: Request, user=Depends(get_user)):
+    return render(request, "privacy.html", user, contact=get_settings().contact_email)
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, next: str = "/search", user=Depends(get_user)):
     if user:
@@ -128,7 +153,9 @@ def _safe_next(n: str | None) -> str:
 
 
 @router.post("/login")
-def login(request: Request, email: str = Form(...), next: str = Form("/search"), conn=Depends(db.request_conn)):
+def login(request: Request, email: str = Form(..., max_length=254), next: str = Form("/search", max_length=500),
+          conn=Depends(db.request_conn)):
+    security.limiter.hit("login", security.client_ip(request))
     try:
         auth.dev_sign_in(request, conn, email)
     except PermissionError as e:
@@ -253,7 +280,7 @@ def remove_target(business_id: str, request: Request, conn=Depends(db.request_co
         if request.headers.get("HX-Target", "").startswith("row-"):
             return HTMLResponse("")
         return render(request, "partials/save_form.html", user, business_id=business_id, saved=None, flash="Removed")
-    return RedirectResponse(request.headers.get("referer") or "/pipeline", status_code=303)
+    return RedirectResponse("/pipeline", status_code=303)
 
 
 # --- pipeline ---------------------------------------------------------------------
@@ -363,19 +390,26 @@ def _connect(request, conn, user, new_key=None, status_code=200):
     return render(request, "connect.html", user, status_code,
                   usage=accounts.usage_summary(conn, user), keys=accounts.list_api_keys(conn, user),
                   new_key=new_key, mcp_url=s.public_url.rstrip("/") + "/mcp", plans=accounts.PLANS,
-                  db_url_hint="postgresql://postgres:postgres@localhost:5432/dealfeed")
+                  db_url_hint="postgresql://USER:PASSWORD@HOST:5432/dealfeed")
 
 
 @router.post("/connect/keys", response_class=HTMLResponse)
-def create_key(request: Request, label: str = Form(""), conn=Depends(db.request_conn),
+def create_key(request: Request, label: str = Form("", max_length=200), conn=Depends(db.request_conn),
                user: User = Depends(require_user)):
-    key = accounts.create_api_key(conn, user, label.strip()[:60] or None)
+    try:
+        key = accounts.create_api_key(conn, user, security.clean_user_text(label, 60))
+    except PlanError as e:
+        return plan_error(request, user, e)
     return _connect(request, conn, user, new_key=key)
 
 
 @router.post("/connect/keys/{key_id}/revoke")
 def revoke_key(key_id: str, conn=Depends(db.request_conn), user: User = Depends(require_user)):
-    accounts.revoke_user_key(conn, user, key_id)
+    try:
+        uuid.UUID(key_id)
+    except ValueError:
+        return RedirectResponse("/connect", status_code=303)
+    accounts.revoke_user_key(conn, user, key_id)     # scoped to this user: can't touch anyone else's keys
     return RedirectResponse("/connect", status_code=303)
 
 

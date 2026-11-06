@@ -6,6 +6,7 @@ from datetime import date
 
 import psycopg
 
+from .. import security
 from . import accounts, business, buybox, deal_math, live, search, targets
 from .accounts import PlanError, User
 
@@ -49,6 +50,9 @@ class Ops:
         return out
 
     def live_status(self, business_id: str) -> dict:
+        # Each check hits a state's public API: throttle per user and overall so we stay a polite client.
+        security.limiter.hit("live_user", str(self.user.id))
+        security.limiter.hit("live_global", "all")
         out = live.check_business(self.conn, business_id)
         self._meter("live_status", 0)
         return out
@@ -90,6 +94,11 @@ class Ops:
             if remaining <= 0:
                 raise PlanError("Monthly row limit reached.")
             max_rows = min(max_rows, remaining)
+        if not saved:
+            day_left = plan.rows_per_day - accounts.rows_used_today(self.conn, self.user)
+            if day_left <= 0:
+                raise PlanError(f"Daily row limit reached ({plan.rows_per_day} rows). Resets at midnight UTC.")
+            max_rows = min(max_rows, day_left)
         out = targets.export_targets(self.conn, self.user.id, max_rows, search_params, saved_status, saved, self.today)
         # Exporting your own saved list doesn't count against the quota; exporting search results does.
         self._meter("export_targets", 0 if saved else out["rows"])

@@ -8,20 +8,25 @@ from datetime import date
 import psycopg
 
 from ..buy import annotate
+from ..security import clean_user_text
 from ..score import attach_breakdowns
 from .buybox import get_buy_box
 from .business import NotFound, _uuid
 from .search import BASE_SELECT, SearchParams, search_rows, target_summary
 
 STATUSES = ("new", "researching", "contacted", "passed")
+NOTES_MAX = 2000
 
 
 def save_target(conn: psycopg.Connection, user_id, business_id: str, status: str = "new",
                 notes: str | None = None) -> dict:
     if status not in STATUSES:
         raise ValueError(f"status must be one of {STATUSES}")
+    if notes is not None and len(notes) > NOTES_MAX:
+        raise ValueError(f"Notes are limited to {NOTES_MAX} characters.")
+    notes = clean_user_text(notes, NOTES_MAX)
     bid = _uuid(business_id)
-    if not conn.execute("SELECT 1 FROM businesses WHERE id = %s", (bid,)).fetchone():
+    if not conn.execute("SELECT 1 FROM businesses WHERE id = %s AND NOT suppressed", (bid,)).fetchone():
         raise NotFound(f"No business with id {business_id!r}")
     row = conn.execute(
         """
@@ -48,7 +53,7 @@ def _saved_rows(conn: psycopg.Connection, user_id, status: str | None, limit: in
         "SELECT b.*,",
         "SELECT b.*, t.status AS pipeline_status, t.notes AS pipeline_notes, t.saved_at, "
         "t.updated_at AS pipeline_updated,", 1)
-    sql = f"{select} JOIN saved_targets t ON t.business_id = b.id WHERE t.user_id = %(user)s"
+    sql = f"{select} JOIN saved_targets t ON t.business_id = b.id WHERE t.user_id = %(user)s AND NOT b.suppressed"
     args: dict = {"user": user_id}
     if status:
         if status not in STATUSES:

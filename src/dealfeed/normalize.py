@@ -64,10 +64,15 @@ def zip5(z: str | None) -> str | None:
     return digits[:5]
 
 
+# Invisible characters (control, zero-width, bidi overrides, BOM) are stripped from every field we ingest:
+# public data ends up in an AI's context, and hidden text is a classic prompt-injection trick.
+_HIDDEN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+
+
 def clean_text(s: str | None) -> str | None:
     if s is None:
         return None
-    s = _SPACES.sub(" ", str(s)).strip()
+    s = _SPACES.sub(" ", _HIDDEN.sub("", str(s))).strip()
     return s or None
 
 

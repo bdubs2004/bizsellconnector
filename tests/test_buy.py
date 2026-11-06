@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from conftest import biz_id
+from conftest import biz_id, web_login
 from dealfeed.api.app import app
 from dealfeed.buy import BuyBox, evaluate_buy, priority
 from dealfeed.services import accounts, buybox, search
@@ -98,7 +98,7 @@ def test_api_and_web_buy_box(conn):
     ex = c.get(f"/v1/businesses/{bid}/score", headers=h).json()
     assert "Outside your target states" in ex["buy_explanation"]
 
-    c.post("/login", data={"email": "boxweb@example.com"})
+    web_login(c, "boxweb@example.com")
     assert "default buy box" in c.get("/buy-box").text
     r = c.post("/buy-box", data={"industries": ["pest_control"], "states": ["IA"], "min_price": "500000",
                                  "max_price": "3000000", "cash_available": "250000", "buyer_salary": "90000",

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 
 import psycopg
 from pydantic import BaseModel, Field
@@ -14,6 +14,7 @@ from ..normalize import normalize_name
 from ..buy import BuyBox, annotate
 from ..industries import BY_SLUG
 from ..score import attach_breakdowns
+from ..security import escape_like
 from ..states_meta import SUPPORTED_STATES, covered_states_text
 
 COUNT_CAP = 10_000
@@ -26,13 +27,16 @@ DATA_CAVEAT = ("Scores are directional, rules-based estimates of likelihood to s
 
 
 class SearchParams(BaseModel):
-    state: str | None = Field(None, description="Two-letter state: IA, CO, NY, CT, OR or TX. Empty = all covered states.")
-    industry: str | None = Field(None, description="Industry name or keyword, e.g. 'pest control', 'janitorial', "
-                                                   "'insurance agency', or a NAICS code")
-    naics_codes: list[str] | None = Field(None, description="NAICS codes or prefixes, e.g. ['561710'] or ['5617']")
-    name_contains: str | None = Field(None, description="Substring of the business name")
-    counties: list[str] | None = Field(None, description="County names, e.g. ['Polk', 'Story']")
-    city: str | None = None
+    state: str | None = Field(None, max_length=2,
+                              description="Two-letter state: IA, CO, NY, CT, OR or TX. Empty = all covered states.")
+    industry: str | None = Field(None, max_length=80, description="Industry name or keyword, e.g. 'pest control', "
+                                                                  "'janitorial', 'insurance agency', or a NAICS code")
+    naics_codes: list[Annotated[str, Field(max_length=6)]] | None = Field(
+        None, max_length=20, description="NAICS codes or prefixes, e.g. ['561710'] or ['5617']")
+    name_contains: str | None = Field(None, max_length=80, description="Substring of the business name")
+    counties: list[Annotated[str, Field(max_length=40)]] | None = Field(
+        None, max_length=20, description="County names, e.g. ['Polk', 'Story']")
+    city: str | None = Field(None, max_length=60)
     min_years_in_business: int | None = Field(None, ge=0)
     min_employees: int | None = Field(None, ge=0)
     max_employees: int | None = Field(None, ge=0)
@@ -47,7 +51,7 @@ class SearchParams(BaseModel):
         "priority", description="priority = likely to sell AND a fit for your buy box (default); sell = likely-to-"
                                 "sell score; buy = fit for your buy box")
     limit: int = Field(25, ge=1, le=50)
-    offset: int = Field(0, ge=0)
+    offset: int = Field(0, ge=0, le=1_000, description="Paging depth is capped at 1,000: narrow the filters instead")
 
 
 def _years(fd: date | None, today: date) -> int | None:
@@ -125,7 +129,7 @@ SIZE_JOIN = """
 
 
 def _where(p: SearchParams, box: BuyBox | None = None) -> tuple[str, dict, dict]:
-    clauses: list[str] = []
+    clauses: list[str] = ["NOT b.suppressed"]
     args: dict = {}
     resolved: dict = {}
     if p.state:
@@ -143,8 +147,8 @@ def _where(p: SearchParams, box: BuyBox | None = None) -> tuple[str, dict, dict]
             resolved["industry"] = ind.label
         else:
             # Unknown industry text: fall back to a name search so the caller still gets something.
-            clauses.append("b.normalized_name LIKE %(industry_kw)s")
-            args["industry_kw"] = f"%{normalize_name(p.industry)}%"
+            clauses.append("b.normalized_name LIKE %(industry_kw)s ESCAPE '\\'")
+            args["industry_kw"] = f"%{escape_like(normalize_name(p.industry))}%"
             resolved["industry_keyword_name_match"] = p.industry
     if naics:
         clean = [re.sub(r"\D", "", n) for n in naics if re.sub(r"\D", "", n)]
@@ -152,8 +156,8 @@ def _where(p: SearchParams, box: BuyBox | None = None) -> tuple[str, dict, dict]
         args["naics_like"] = [c + "%" for c in clean]
         resolved["naics_codes"] = sorted(set(clean))
     if p.name_contains:
-        clauses.append("b.normalized_name LIKE %(name_kw)s")
-        args["name_kw"] = f"%{normalize_name(p.name_contains)}%"
+        clauses.append("b.normalized_name LIKE %(name_kw)s ESCAPE '\\'")
+        args["name_kw"] = f"%{escape_like(normalize_name(p.name_contains))}%"
     if p.counties:
         clauses.append("b.county = ANY(%(counties)s)")
         args["counties"] = [re.sub(r"\s+COUNTY$", "", c.strip().upper()) for c in p.counties]
@@ -271,7 +275,7 @@ def market_summary(conn: psycopg.Connection, state: str | None = None, industry:
     st = state.strip().upper() if state else None
     args = {"state": st, "like": [c + "%" for c in codes]}
     in_state = "(%(state)s::text IS NULL OR b.state = %(state)s)"
-    base = f"FROM businesses b WHERE {in_state} AND b.naics_code LIKE ANY(%(like)s)"
+    base = f"FROM businesses b WHERE {in_state} AND NOT b.suppressed AND b.naics_code LIKE ANY(%(like)s)"
     q = lambda sql: conn.execute(sql, args).fetchall()  # noqa: E731
 
     totals = q(f"SELECT count(*) AS total, count(*) FILTER (WHERE status = 'active') AS active, "
@@ -294,7 +298,7 @@ def market_summary(conn: psycopg.Connection, state: str | None = None, industry:
                   FROM businesses b LEFT JOIN LATERAL (SELECT * FROM size_estimates x WHERE x.business_id = b.id
                        ORDER BY as_of DESC NULLS LAST LIMIT 1) se ON true
                  WHERE (%(state)s::text IS NULL OR b.state = %(state)s) AND b.naics_code LIKE ANY(%(like)s)
-                   AND b.status <> 'inactive'
+                   AND b.status <> 'inactive' AND NOT b.suppressed
                  GROUP BY 1""")
     scores = q(f"""SELECT CASE WHEN b.score >= 80 THEN '80-100' WHEN b.score >= 60 THEN '60-79'
                             WHEN b.score >= 40 THEN '40-59' ELSE '0-39' END AS bucket, count(*) AS n

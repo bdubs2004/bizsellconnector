@@ -1,16 +1,20 @@
 """REST API (scope 6.2). Same operations as the MCP tools; OpenAPI docs at /docs.
 
 Auth: `Authorization: Bearer dfk_...` or `X-API-Key: dfk_...`.
+Errors never carry internals: unexpected failures return a short reference id (details are in the server log).
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from .. import db
+from .. import db, security
+from ..security import RateLimited, SecurityHeadersMiddleware
 from ..config import get_settings
 from ..states_meta import covered_states_text
 from ..services import accounts
@@ -22,21 +26,60 @@ from ..services.ops import Ops
 from ..services.search import SearchParams
 from ..web import auth as web_auth
 from ..web.routes import HERE as WEB_DIR
-from ..web.routes import LoginRequired, login_redirect
+from ..web.routes import CSRFError, LoginRequired, login_redirect
 from ..web.routes import router as web_router
+
+@asynccontextmanager
+async def lifespan(_app):
+    security.enforce_production()     # refuse to boot with insecure production settings
+    yield
+
 
 app = FastAPI(
     title="Deal Feed API",
     version="0.1.0",
     description=("Off-market small-business targets in " + covered_states_text()
                  + ", scored by likelihood to sell."),
+    lifespan=lifespan,
 )
 
 # Web app (server-rendered, same process). Session cookie is signed, HttpOnly, SameSite=Lax.
 app.add_middleware(SessionMiddleware, secret_key=web_auth.session_secret(), same_site="lax",
                    https_only=get_settings().env == "production", max_age=60 * 60 * 24 * 30)
+app.add_middleware(SecurityHeadersMiddleware)          # outermost: headers on every response, incl. errors
 app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 app.include_router(web_router)
+
+
+def _wants_json(request: Request) -> bool:
+    return request.url.path.startswith(("/v1/", "/healthz"))
+
+
+@app.exception_handler(RateLimited)
+async def _rate(request: Request, e: RateLimited):
+    headers = {"Retry-After": str(e.retry_after)}
+    if _wants_json(request):
+        return JSONResponse({"detail": str(e)}, status_code=429, headers=headers)
+    return HTMLResponse(f"<p>{str(e)}</p>", status_code=429, headers=headers)
+
+
+@app.exception_handler(Exception)
+async def _internal(request: Request, e: Exception):
+    ref = security.log_internal_error(request.url.path, e)
+    msg = f"Something went wrong on our side. Reference: {ref}"
+    if _wants_json(request):
+        return JSONResponse({"detail": msg, "reference": ref}, status_code=500)
+    return HTMLResponse(f"<!doctype html><title>Error</title><p>{msg}</p><p><a href='/'>Home</a></p>",
+                        status_code=500)
+
+
+@app.exception_handler(CSRFError)
+async def _csrf(request: Request, _: CSRFError):
+    msg = "Your session expired or this form came from somewhere else. Reload the page and try again."
+    if _wants_json(request) or request.headers.get("HX-Request") == "true":
+        return JSONResponse({"detail": msg}, status_code=403) if _wants_json(request) else HTMLResponse(
+            f'<div class="alert alert-error" role="alert">{msg}</div>', status_code=403)
+    return HTMLResponse(f"<!doctype html><title>Expired</title><p>{msg}</p><p><a href='/'>Home</a></p>", status_code=403)
 
 
 @app.exception_handler(LoginRequired)
@@ -67,14 +110,19 @@ async def _bad(_: Request, e: ValueError):
 get_conn = db.request_conn
 
 
-def get_ops(conn=Depends(get_conn), authorization: str | None = Header(None),
+def get_ops(request: Request, conn=Depends(get_conn), authorization: str | None = Header(None),
             x_api_key: str | None = Header(None)) -> Ops:
     key = x_api_key
     if not key and authorization and authorization.lower().startswith("bearer "):
         key = authorization[7:].strip()
-    if not key:
+    if not key or len(key) > 200:
         raise HTTPException(401, "Missing API key (Authorization: Bearer <key> or X-API-Key header)")
-    user = accounts.user_for_api_key(conn, key)
+    try:
+        user = accounts.user_for_api_key(conn, key)
+    except AuthError:
+        security.limiter.hit("auth_fail", security.client_ip(request))   # slows key guessing per IP
+        raise
+    security.limiter.hit("api", str(user.id))
     return Ops(conn, user, surface="api")
 
 
@@ -132,9 +180,9 @@ def market_summary(state: str | None = None, industry: str | None = None, naics_
 
 
 class SaveTarget(BaseModel):
-    business_id: str
+    business_id: str = Field(max_length=64)
     status: str = Field("new", description="new, researching, contacted, passed")
-    notes: str | None = None
+    notes: str | None = Field(None, max_length=2000)
 
 
 @app.post("/v1/saved-targets", tags=["pipeline"])

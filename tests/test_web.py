@@ -3,7 +3,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import biz_id
+from conftest import biz_id, page_csrf, web_login
 from dealfeed.api.app import app
 
 
@@ -11,7 +11,7 @@ from dealfeed.api.app import app
 def web(built):
     """A browser-like client signed in as a fresh searcher-plan user."""
     c = TestClient(app)
-    r = c.post("/login", data={"email": "web@example.com", "next": "/search"}, follow_redirects=False)
+    r = web_login(c, "web@example.com")
     assert r.status_code == 303 and r.headers["location"] == "/search"
     return c
 
@@ -36,14 +36,16 @@ def test_protected_pages_redirect_to_login(built):
 
 def test_login_rejects_open_redirect_and_bad_email(built):
     c = TestClient(app)
-    r = c.post("/login", data={"email": "x@example.com", "next": "//evil.example"}, follow_redirects=False)
+    r = web_login(c, "x@example.com", next_url="//evil.example")
     assert r.headers["location"] == "/search"
-    assert c.post("/login", data={"email": "not-an-email"}).status_code == 400
+    c2 = TestClient(app)
+    assert c2.post("/login", data={"email": "not-an-email", "csrf_token": page_csrf(c2)}).status_code == 400
 
 
 def test_dev_login_disabled_in_production(built, monkeypatch):
     monkeypatch.setenv("DEALFEED_ENV", "production")
-    r = TestClient(app).post("/login", data={"email": "prod@example.com"}, follow_redirects=False)
+    c = TestClient(app)
+    r = c.post("/login", data={"email": "prod@example.com", "csrf_token": page_csrf(c)}, follow_redirects=False)
     assert r.status_code == 403
 
 

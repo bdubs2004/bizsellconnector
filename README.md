@@ -51,7 +51,7 @@ cp .env.example .env && set -a && source .env && set +a
 dealfeed migrate
 dealfeed demo                              # loads tests/fixtures/*, builds, prints a demo API key
 dealfeed serve                             # web app at http://localhost:8000, API docs at /docs
-pytest -q                                  # 81 tests; DROPS the dealfeed_test schema each run
+pytest -q                                  # 98 tests; DROPS the dealfeed_test schema each run
 ```
 
 Try it:
@@ -61,6 +61,19 @@ curl -s -X POST localhost:8000/v1/targets/search \
   -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
   -d '{"industry": "pest control", "min_years_in_business": 20}'
 ```
+
+## Security
+
+See [SECURITY.md](SECURITY.md). Highlights:
+- **No internals leak:** generic errors with a reference id on web, API and MCP.
+- **Request protection:** CSRF tokens on every form, plus a strict Content-Security-Policy (no inline scripts).
+- **Abuse limits:** rate limits per key, user and IP; daily row caps; paging depth caps.
+- **AI guardrails:** prompt-injection hygiene and instructions for connected AIs.
+- **Isolation:** customers can't see each other's data, proven by tests.
+- **Removal requests:** `dealfeed suppress`.
+- **Production:** refuses to start with insecure settings.
+
+**Operator to-do:** make this repo private and work through the checklist in SECURITY.md.
 
 ## Three scores
 

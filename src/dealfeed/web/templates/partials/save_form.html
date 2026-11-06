@@ -3,6 +3,7 @@
   {% if flash %}<p class="flash" role="status">{{ flash }}</p>{% endif %}
   <form method="post" action="/business/{{ business_id }}/save" class="stack"
         hx-post="/business/{{ business_id }}/save" hx-target="#save-box" hx-swap="outerHTML">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Status
       <select name="status">
         {% for s in STATUSES %}<option value="{{ s }}" {% if saved and saved.status == s %}selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
@@ -16,6 +17,7 @@
   {% if saved %}
   <form method="post" action="/business/{{ business_id }}/remove"
         hx-post="/business/{{ business_id }}/remove" hx-target="#save-box" hx-swap="outerHTML">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button class="linkish danger" type="submit">Remove from pipeline</button>
   </form>
   {% endif %}

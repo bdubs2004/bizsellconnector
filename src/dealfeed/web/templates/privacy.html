@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Privacy and removal requests{% endblock %}
+{% block content %}
+<div class="narrow card prose" style="max-width: 720px">
+  <h1>Privacy and removal requests</h1>
+  <h2 class="h-sm">What's here</h2>
+  <p>Deal Feed lists established businesses from public state business registries ({{ COVERED_STATES }}) and
+    public SBA loan data. It holds business-level information only: the business's name, the address on its
+    public filing, its industry, size estimates, and the names of registered agents or officers as they appear
+    in public filings.</p>
+  <h2 class="h-sm">What isn't</h2>
+  <p>No home addresses of people, ages, phone numbers, personal emails, or data from people-search sites.
+    Registered-agent and officer addresses, owner demographics, and individual (sole-proprietor) loan records
+    are dropped when data is loaded and never stored.</p>
+  <h2 class="h-sm">Remove a business</h2>
+  <p>If you own or represent a business listed here and want it removed, email
+    <a href="mailto:{{ contact }}">{{ contact }}</a> with the business name and state. Removed businesses
+    disappear from search, profiles, exports, saved lists and AI tools, and stay removed when data refreshes.</p>
+  <h2 class="h-sm">Your account</h2>
+  <p>We store your email, plan, saved targets, notes and buy box. API keys are stored only as one-way hashes.
+    Your saved targets, notes and buy box are visible only to you.</p>
+</div>
+{% endblock %}

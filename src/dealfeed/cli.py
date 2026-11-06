@@ -92,6 +92,23 @@ def cmd_build(a, conn):
     _print(pipeline.build(conn, rematch=a.rematch, llm_classify_limit=a.llm_classify))
 
 
+def cmd_suppress(a, conn):
+    """Removal requests: hide a business everywhere (search, profiles, exports, pipelines, AI tools)."""
+    flag = a.action == "suppress"
+    if a.action == "list":
+        _print(conn.execute("SELECT b.id, b.legal_name, b.state, l.reason, l.at FROM businesses b "
+                            "LEFT JOIN LATERAL (SELECT reason, at FROM suppression_log s WHERE s.business_id = b.id "
+                            "ORDER BY at DESC LIMIT 1) l ON true WHERE b.suppressed ORDER BY l.at DESC").fetchall())
+        return
+    n = conn.execute("UPDATE businesses SET suppressed = %s WHERE id::text = %s", (flag, a.business_id)).rowcount
+    if not n:
+        sys.exit(f"No business with id {a.business_id}")
+    conn.execute("INSERT INTO suppression_log (business_id, action, reason) VALUES (%s, %s, %s)",
+                 (a.business_id, a.action, a.reason))
+    conn.commit()
+    _print({"business_id": a.business_id, "suppressed": flag})
+
+
 def cmd_compact(a, conn):
     conn.close()
     _print(db.compact())
@@ -184,7 +201,9 @@ def _demo_coordinates(conn):
 def cmd_serve_api(a, conn):
     import uvicorn
     conn.close()
-    uvicorn.run("dealfeed.api.app:app", host=a.host, port=a.port, reload=a.reload)
+    # No "Server: uvicorn" header; client IPs from trusted proxies only (rate limits key on them).
+    uvicorn.run("dealfeed.api.app:app", host=a.host, port=a.port, reload=a.reload, server_header=False,
+                proxy_headers=True, forwarded_allow_ips=get_settings().trusted_proxies)
 
 
 def cmd_serve_mcp(a, conn):
@@ -237,6 +256,11 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=cmd_geocode)
 
     sub.add_parser("stats", help="data metrics").set_defaults(fn=cmd_stats)
+    p = sub.add_parser("suppress", help="removal requests: hide / unhide a business everywhere")
+    p.add_argument("action", choices=["suppress", "unsuppress", "list"])
+    p.add_argument("business_id", nargs="?")
+    p.add_argument("--reason", help="e.g. 'owner request by email 2026-11-06'")
+    p.set_defaults(fn=cmd_suppress)
     sub.add_parser("compact", help="return free space to the OS (run after the first full load)").set_defaults(
         fn=cmd_compact)
 
