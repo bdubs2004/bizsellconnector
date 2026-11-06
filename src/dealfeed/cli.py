@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import db, geocode, match, pipeline
 from .config import get_settings
-from .ingest import common, ia_sos, sba
+from .ingest import common, sba, states
 from .services import accounts
 from .services.search import SearchParams
 from .services.targets import export_targets
@@ -30,30 +30,62 @@ def cmd_migrate(a, conn):
     _print({"applied": db.migrate(conn)})
 
 
+def _state_list(arg: str | None) -> list[str]:
+    if not arg or arg.lower() == "all":
+        return list(states.SUPPORTED_STATES)
+    return [s.strip().upper() for s in arg.split(",") if s.strip()]
+
+
+def cmd_sources(a, conn):
+    last = {r["source"]: r for r in conn.execute(
+        "SELECT DISTINCT ON (source) source, finished_at, rows_loaded, notes FROM pipeline_runs "
+        "WHERE status = 'ok' ORDER BY source, id DESC").fetchall()}
+    for src in states.SOURCES.values():
+        r = last.get(src.key)
+        print(f"{src.state}  {src.key:8s} {src.name}")
+        print(f"    {src.homepage}  ({src.license})")
+        print(f"    last load: {r['finished_at']:%Y-%m-%d} · {r['rows_loaded']:,} rows" if r else "    last load: never")
+        if src.notes:
+            print(f"    note: {src.notes}")
+
+
+def cmd_fetch(a, conn):
+    for st in _state_list(a.state):
+        src = states.get_source(st)
+        dest_dir = get_settings().raw_dir / src.key / date.today().isoformat()
+        print(f"Fetching {src.state} ({src.homepage}) -> {dest_dir}", file=sys.stderr)
+        path = states.fetch(src.key, dest_dir, min_age_years=a.min_age, max_rows=a.max_rows)
+        print(path)
+
+
+def cmd_refresh(a, conn):
+    """fetch + ingest for one or more states (then run `dealfeed build`)."""
+    for st in _state_list(a.state):
+        src = states.get_source(st)
+        dest_dir = get_settings().raw_dir / src.key / date.today().isoformat()
+        print(f"Fetching {src.state} -> {dest_dir}", file=sys.stderr)
+        path = states.fetch(src.key, dest_dir, min_age_years=a.min_age, max_rows=a.max_rows)
+        _print(states.load(conn, src.key, path, min_age_years=a.min_age))
+    print("Now run: dealfeed build", file=sys.stderr)
+
+
 def cmd_ingest(a, conn):
-    states = [s.strip().upper() for s in a.states.split(",")]
-    if a.source == "ia-sos":
-        path = Path(a.file) if a.file else None
-        if a.download:
-            dest = get_settings().raw_dir / "ia_sos" / date.today().isoformat() / "active_iowa_business_entities.csv"
-            print(f"Downloading {ia_sos.DOWNLOAD_URL} -> {dest}", file=sys.stderr)
-            path = common.download(ia_sos.DOWNLOAD_URL, dest)
-        elif path:
-            path = _stash(path, "ia_sos")
-        else:
-            sys.exit("--file or --download required")
-        _print(ia_sos.load(conn, path))
+    if a.source == "state":
+        if not a.state or not a.file:
+            sys.exit("usage: dealfeed ingest state --state CO --file path/to/file.csv")
+        src = states.get_source(a.state)
+        _print(states.load(conn, src.key, _stash(Path(a.file), src.key), min_age_years=a.min_age))
     elif a.source == "ppp":
         for f in a.file_list:
-            _print(sba.load_ppp(conn, _stash(Path(f), "ppp"), states))
+            _print(sba.load_ppp(conn, _stash(Path(f), "ppp"), _state_list(a.states)))
     elif a.source in ("7a", "504"):
         for f in a.file_list:
-            _print(sba.load_sba(conn, _stash(Path(f), f"sba_{a.source}"), a.source, states))
+            _print(sba.load_sba(conn, _stash(Path(f), f"sba_{a.source}"), a.source, _state_list(a.states)))
 
 
 def cmd_inspect(a, conn):
     p = Path(a.file)
-    _print(ia_sos.inspect(p) if a.source == "ia_sos" else sba.inspect(p, a.source))
+    _print(sba.inspect(p, a.source) if a.source in ("ppp", "7a", "504") else states.inspect(a.source, p))
 
 
 def cmd_build(a, conn):
@@ -84,7 +116,8 @@ def cmd_review(a, conn):
 
 def cmd_export_top(a, conn):
     """Phase 1 deliverable: top N targets per industry to a CSV spreadsheet."""
-    params = SearchParams(industry=a.industry, min_years_in_business=a.min_years, counties=a.counties)
+    params = SearchParams(industry=a.industry, state=a.state, min_years_in_business=a.min_years,
+                          counties=a.counties)
     out = export_targets(conn, user_id=None, max_rows=a.limit, search=params)
     Path(a.out).write_text(out["csv"])
     print(f"Wrote {out['rows']} rows to {a.out}", file=sys.stderr)
@@ -109,9 +142,10 @@ def cmd_demo(a, conn):
     """Load the fictional fixture data and build, so you can try the API/MCP without real files."""
     db.migrate(conn)
     pulled = datetime.now(timezone.utc)
-    _print(ia_sos.load(conn, FIXTURES / "ia_sos_sample.csv", pulled))
-    _print(sba.load_ppp(conn, FIXTURES / "ppp_sample.csv", ["IA"], pulled))
-    _print(sba.load_sba(conn, FIXTURES / "sba_7a_sample.csv", "7a", ["IA"], pulled))
+    for key in states.STATE_SOURCE_KEYS:
+        _print(states.load(conn, key, FIXTURES / f"{key}_sample.csv", pulled, min_age_years=0))
+    _print(sba.load_ppp(conn, FIXTURES / "ppp_sample.csv", None, pulled))
+    _print(sba.load_sba(conn, FIXTURES / "sba_7a_sample.csv", "7a", None, pulled))
     _print(pipeline.build(conn))
     _demo_coordinates(conn)
     u = accounts.get_user_by_email(conn, "demo@example.com") or accounts.create_user(conn, "demo@example.com", "fund")
@@ -125,6 +159,10 @@ _DEMO_CITY_CENTERS = {
     "DAVENPORT": (41.52, -90.58), "ANKENY": (41.73, -93.60), "MASON CITY": (43.15, -93.20),
     "IOWA CITY": (41.66, -91.53), "BETTENDORF": (41.55, -90.50), "DUBUQUE": (42.50, -90.66),
     "WATERLOO": (42.49, -92.34), "FORT DODGE": (42.50, -94.17),
+    "DENVER": (39.74, -104.99), "COLORADO SPRINGS": (38.83, -104.82), "ALBANY": (42.65, -73.76),
+    "BUFFALO": (42.89, -78.88), "HARTFORD": (41.76, -72.68), "NEW HAVEN": (41.31, -72.92),
+    "PORTLAND": (45.52, -122.68), "EUGENE": (44.05, -123.09), "AUSTIN": (30.27, -97.74),
+    "SAN ANTONIO": (29.42, -98.49),
 }
 
 
@@ -157,17 +195,30 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("migrate", help="create/upgrade database tables").set_defaults(fn=cmd_migrate)
 
-    p = sub.add_parser("ingest", help="load a raw source file")
-    p.add_argument("source", choices=["ia-sos", "ppp", "7a", "504"])
+    sub.add_parser("sources", help="list the state registries we load").set_defaults(fn=cmd_sources)
+
+    for name, fn, help_ in (("fetch", cmd_fetch, "download state registry files"),
+                            ("refresh", cmd_refresh, "download + load state registries")):
+        p = sub.add_parser(name, help=help_)
+        p.add_argument("state", help=f"state code ({', '.join(states.SUPPORTED_STATES)}) or 'all'")
+        p.add_argument("--min-age", type=int, default=None,
+                       help="skip entities younger than N years (default DEALFEED_MIN_AGE_YEARS, 5)")
+        p.add_argument("--max-rows", type=int, default=None, help="stop after N rows (for trying it out)")
+        p.set_defaults(fn=fn)
+
+    p = sub.add_parser("ingest", help="load a file you already downloaded")
+    p.add_argument("source", choices=["state", "ppp", "7a", "504"])
     p.add_argument("file_list", nargs="*", metavar="FILE", help="CSV file(s) for ppp/7a/504")
-    p.add_argument("--file", help="CSV file for ia-sos")
-    p.add_argument("--download", action="store_true", help="ia-sos: download the latest file from data.iowa.gov")
-    p.add_argument("--states", default="IA", help="comma-separated states to keep from SBA files")
+    p.add_argument("--state", help="state code for `ingest state`")
+    p.add_argument("--file", help="CSV/zip file for `ingest state`")
+    p.add_argument("--min-age", type=int, default=None)
+    p.add_argument("--states", default="all", help="SBA files: comma-separated states to keep (default all covered)")
     p.set_defaults(fn=cmd_ingest)
 
     p = sub.add_parser("inspect", help="show a file's columns and how they map")
     p.add_argument("file")
-    p.add_argument("--source", choices=["ia_sos", "ppp", "7a", "504"], required=True)
+    p.add_argument("--source", required=True,
+                   help=f"ppp, 7a, 504, or a state source ({', '.join(states.STATE_SOURCE_KEYS)})")
     p.set_defaults(fn=cmd_inspect)
 
     p = sub.add_parser("build", help="match, classify, size and score")
@@ -190,6 +241,7 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("export-top", help="write top targets for an industry to CSV")
     p.add_argument("--industry", required=True)
+    p.add_argument("--state", help="limit to one state")
     p.add_argument("--limit", type=int, default=100)
     p.add_argument("--min-years", type=int)
     p.add_argument("--counties", nargs="*")

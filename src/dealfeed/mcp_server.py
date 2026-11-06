@@ -34,12 +34,15 @@ from .services.business import NotFound
 from .services.deal_math import DealInputs
 from .services.ops import Ops
 from .services.search import SearchParams
+from .states_meta import SUPPORTED_STATES, covered_states_text
 
 log = logging.getLogger(__name__)
 
-INSTRUCTIONS = """\
-Deal Feed: off-market small businesses in Iowa (v1) that are NOT listed for sale but score as likely to sell
-in the next few years. Built for searchers doing entrepreneurship-through-acquisition (ETA).
+INSTRUCTIONS = f"""\
+Deal Feed: off-market small businesses in {covered_states_text()} that are NOT listed for sale but score as
+likely to sell in the next few years. Built for searchers doing entrepreneurship-through-acquisition (ETA).
+Coverage: established domestic for-profit entities from each state's public business registry, matched to
+SBA PPP/7(a)/504 loan records. State codes: {", ".join(SUPPORTED_STATES)}.
 
 Typical flow: market_summary to size an industry -> search_targets to get a ranked list -> get_business /
 explain_score on the interesting ones -> sba_deal_math for financing scenarios -> save_target to track them.
@@ -109,7 +112,7 @@ def register_tools(server: MCPServer) -> None:
     async def search_targets(
         industry: str | None = None,
         naics_codes: list[str] | None = None,
-        state: str = "IA",
+        state: str | None = None,
         counties: list[str] | None = None,
         city: str | None = None,
         name_contains: str | None = None,
@@ -126,7 +129,8 @@ def register_tools(server: MCPServer) -> None:
         """Find off-market businesses matching criteria, ranked by likelihood-to-sell score (0-100).
 
         industry: plain words like "pest control", "janitorial", "insurance agency", "auto repair",
-        "landscaping", "bookkeeping", or a NAICS code. counties: Iowa county names. Size filters use
+        "landscaping", "bookkeeping", or a NAICS code. state: IA, CO, NY, CT, OR or TX (omit for all).
+        counties: county names (populated for NY and PPP-matched businesses; sparse elsewhere). Size filters use
         estimated employees / annual payroll from PPP data; include_unknown_size keeps businesses with no
         estimate. limit is capped at 50 per call; page with offset/next_offset.
         """
@@ -182,9 +186,10 @@ def register_tools(server: MCPServer) -> None:
 
     @server.tool(annotations=READ)
     async def market_summary(industry: str | None = None, naics_code: str | None = None,
-                             state: str = "IA") -> dict[str, Any]:
-        """Market overview for an industry in a state: business counts, age and size distribution, score
-        distribution, top counties, and SBA 7(a)/504 loan benchmarks and active lenders (last 5 years)."""
+                             state: str | None = None) -> dict[str, Any]:
+        """Market overview for an industry in one state (or all covered states if omitted): business counts by
+        state, age and size distribution, score distribution, top counties, and SBA 7(a)/504 loan benchmarks
+        and active lenders (last 5 years)."""
         return await _run(lambda ops: ops.market_summary(state, industry, naics_code))
 
     @server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True,
@@ -203,13 +208,14 @@ def register_tools(server: MCPServer) -> None:
         saved: bool = False,
         saved_status: str | None = None,
         industry: str | None = None,
+        state: str | None = None,
         counties: list[str] | None = None,
         min_years_in_business: int | None = None,
         min_score: int | None = None,
     ) -> dict[str, Any]:
         """CSV export of either the user's saved pipeline (saved=true) or a search. Returns the CSV text in
         `csv`; offer to save it as a file for the user. Search exports count toward the monthly row limit."""
-        sp = None if saved else SearchParams(industry=industry, counties=counties,
+        sp = None if saved else SearchParams(industry=industry, state=state, counties=counties,
                                              min_years_in_business=min_years_in_business, min_score=min_score)
         return await _run(lambda ops: ops.export_targets(sp, saved, saved_status))
 

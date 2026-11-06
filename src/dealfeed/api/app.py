@@ -12,6 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .. import db
 from ..config import get_settings
+from ..states_meta import covered_states_text
 from ..services import accounts
 from ..services.accounts import AuthError, PlanError
 from ..services.business import NotFound
@@ -26,7 +27,8 @@ from ..web.routes import router as web_router
 app = FastAPI(
     title="Deal Feed API",
     version="0.1.0",
-    description="Off-market small-business targets in the Upper Midwest, scored by likelihood to sell.",
+    description=("Off-market small-business targets in " + covered_states_text()
+                 + ", scored by likelihood to sell."),
 )
 
 # Web app (server-rendered, same process). Session cookie is signed, HttpOnly, SameSite=Lax.
@@ -107,7 +109,7 @@ def deal_math(inputs: DealInputs, ops: Ops = Depends(get_ops)):
 
 
 @app.get("/v1/markets/summary", tags=["analysis"])
-def market_summary(state: str = "IA", industry: str | None = None, naics_code: str | None = None,
+def market_summary(state: str | None = None, industry: str | None = None, naics_code: str | None = None,
                    ops: Ops = Depends(get_ops)):
     return ops.market_summary(state, industry, naics_code)
 

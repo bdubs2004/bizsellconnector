@@ -1,13 +1,15 @@
-Corp Number,Legal Name,Corporation Type,Modifier,Effective Date,Registered Agent,RA Address 1,RA Address 2,RA City,RA State,RA Zip,Home Office Address 1,Home Office Address 2,Home Office City,Home Office State,Home Office Zip
-100001,"Hawkeye Pest Solutions, Inc.",Domestic Profit,Domestic,03/15/1988,Dale Fictional,999 Home Street,,Des Moines,IA,50309,1200 Ingersoll Avenue,,Des Moines,IA,50309
-100002,Prairie Bug & Termite Control L.L.C.,Domestic LLC,Domestic,06/01/1996,Marla Example,999 Home Street,,Ames,IA,50010,415 Lincoln Way,,Ames,IA,50010
-100003,Cedar Valley Janitorial Services Co,Domestic Profit,Domestic,09/22/1992,Gene Placeholder,999 Home Street,,Cedar Rapids,IA,52401,88 1st Avenue SE,,Cedar Rapids,IA,52401
-100004,River City Cleaning Services LLC,Domestic LLC,Domestic,02/10/2023,Pat Sample,999 Home Street,,Davenport,IA,52803,2100 E River Drive,,Davenport,IA,52803
-100005,"Heartland Insurance Agency, Inc.",Domestic Profit,Domestic,11/30/1979,CT Corporation System,999 Home Street,,Ankeny,IA,50023,301 SW Oralabor Road,,Ankeny,IA,50023
-100006,Northwoods Insurance Group LLC,Domestic LLC,Domestic,04/04/2008,Lee Testcase,999 Home Street,,Mason City,IA,50401,19 N Federal Avenue,,Mason City,IA,50401
-100007,Sunrise Pest Management LLC,Domestic LLC,Domestic,07/19/2001,Robin Notreal,999 Home Street,,Iowa City,IA,52240,730 S Gilbert Street,,Iowa City,IA,52240
-100008,Quad City Lawn & Landscape Inc,Domestic Profit,Domestic,05/05/1999,Chris Madeup,999 Home Street,,Bettendorf,IA,52722,2400 Spruce Hills Drive,,Bettendorf,IA,52722
-100009,Midwest Widget Holdings LLC,Domestic LLC,Domestic,01/12/2015,Northwest Registered Agent LLC,999 Home Street,,Dubuque,IA,52001,500 Main Street,,Dubuque,IA,52001
-100010,Golden Plains Auto Repair LLC,Domestic LLC,Domestic,08/08/1990,Sam Imaginary,999 Home Street,,Waterloo,IA,50702,1515 W 4th Street,,Waterloo,IA,50702
-100011,Old Mill Exterminating Company,Domestic Profit,Domestic,10/10/1985,Terry Fakename,999 Home Street,,Waterloo,IA,50701,220 Commercial Street,,Waterloo,IA,50701
-100012,Townsquare Tax Service LLC,Domestic LLC,Domestic,03/03/2012,Jo Exampleton,999 Home Street,,Fort Dodge,IA,50501,12 Central Avenue,,Fort Dodge,IA,50501
+corp_number,legal_name,corporation_type,effective_date,registered_agent,ra_address_1,ra_address_2,ra_city,ra_state,ra_zip,ra_latitude,ra_longitude,ra_location,home_office,ho_address_1,ho_address_2,ho_city,ho_state,ho_zip,ho_country,ho_latitude,ho_longitude,ho_location
+100001,"Hawkeye Pest Solutions, Inc.",10 - DOMESTIC PROFIT,03/15/1988,Dale Fictional,999 Home Street,,Des Moines,IA,50309,41.1,-93.1,,,1200 Ingersoll Avenue,,Des Moines,IA,50309,USA,,,
+100002,Prairie Bug & Termite Control L.L.C.,34 - DOMESTIC LIMITED LIABILITY COMPANY,06/01/1996,Marla Example,999 Home Street,,Ames,IA,50010,41.1,-93.1,,,415 Lincoln Way,,Ames,IA,50010,USA,,,
+100003,Cedar Valley Janitorial Services Co,10 - DOMESTIC PROFIT,09/22/1992,Gene Placeholder,999 Home Street,,Cedar Rapids,IA,52401,41.1,-93.1,,,88 1st Avenue SE,,Cedar Rapids,IA,52401,USA,,,
+100004,River City Cleaning Services LLC,34 - DOMESTIC LIMITED LIABILITY COMPANY,02/10/2023,Pat Sample,999 Home Street,,Davenport,IA,52803,41.1,-93.1,,,2100 E River Drive,,Davenport,IA,52803,USA,,,
+100005,"Heartland Insurance Agency, Inc.",10 - DOMESTIC PROFIT,11/30/1979,CT Corporation System,999 Home Street,,Ankeny,IA,50023,41.1,-93.1,,,301 SW Oralabor Road,,Ankeny,IA,50023,USA,,,
+100006,Northwoods Insurance Group LLC,34 - DOMESTIC LIMITED LIABILITY COMPANY,04/04/2008,Lee Testcase,999 Home Street,,Mason City,IA,50401,41.1,-93.1,,,19 N Federal Avenue,,Mason City,IA,50401,USA,,,
+100007,Sunrise Pest Management LLC,34 - DOMESTIC LIMITED LIABILITY COMPANY,07/19/2001,Robin Notreal,999 Home Street,,Iowa City,IA,52240,41.1,-93.1,,,730 S Gilbert Street,,Iowa City,IA,52240,USA,,,
+100008,Quad City Lawn & Landscape Inc,10 - DOMESTIC PROFIT,05/05/1999,Chris Madeup,999 Home Street,,Bettendorf,IA,52722,41.1,-93.1,,,2400 Spruce Hills Drive,,Bettendorf,IA,52722,USA,,,
+100009,Midwest Widget Holdings LLC,34 - DOMESTIC LIMITED LIABILITY COMPANY,01/12/2015,Northwest Registered Agent LLC,999 Home Street,,Dubuque,IA,52001,41.1,-93.1,,,500 Main Street,,Dubuque,IA,52001,USA,,,
+100010,Golden Plains Auto Repair LLC,34 - DOMESTIC LIMITED LIABILITY COMPANY,08/08/1990,Sam Imaginary,999 Home Street,,Waterloo,IA,50702,41.1,-93.1,,,1515 W 4th Street,,Waterloo,IA,50702,USA,,,
+100011,Old Mill Exterminating Company,10 - DOMESTIC PROFIT,10/10/1985,Terry Fakename,999 Home Street,,Waterloo,IA,50701,41.1,-93.1,,,220 Commercial Street,,Waterloo,IA,50701,USA,,,
+100012,Townsquare Tax Service LLC,34 - DOMESTIC LIMITED LIABILITY COMPANY,03/03/2012,Jo Exampleton,999 Home Street,,Fort Dodge,IA,50501,41.1,-93.1,,,12 Central Avenue,,Fort Dodge,IA,50501,USA,,,
+100013,First Example Church of Ames,22 - REVISED DOMESTIC NON-PROFIT,1950-01-01,Pastor Sample,999 Home Street,,Ames,IA,50010,41.1,-93.1,,,1 Church St,,Ames,IA,50010,USA,,,
+100014,Megacorp Services LLC,35 - FOREIGN LIMITED LIABILITY COMPANY,2001-01-01,CT Corporation System,999 Home Street,,Des Moines,IA,50309,41.1,-93.1,,,9 Big Tower,,Des Moines,IA,50309,USA,,,

@@ -76,7 +76,7 @@ def list_saved_targets(conn: psycopg.Connection, user_id, status: str | None = N
 
 EXPORT_COLUMNS = ["business_id", "name", "score", "industry", "naics_code", "city", "county", "state",
                   "years_in_business", "formation_date", "status", "employees_est", "payroll_est", "size_as_of",
-                  "top_reasons", "pipeline_status", "notes", "iowa_sos_as_of"]
+                  "top_reasons", "pipeline_status", "notes", "state_registry_as_of"]
 
 
 def _csv(rows: list[dict], today: date) -> str:
@@ -91,7 +91,7 @@ def _csv(rows: list[dict], today: date) -> str:
             "employees_est": se.get("employees"), "payroll_est": se.get("annual_payroll"), "size_as_of": se.get("as_of"),
             "top_reasons": " · ".join(t["top_reasons"]),
             "pipeline_status": r.get("pipeline_status"), "notes": r.get("pipeline_notes"),
-            "iowa_sos_as_of": t["data_as_of"]["iowa_sos"],
+            "state_registry_as_of": t["data_as_of"]["state_registry"],
         })
     return buf.getvalue()
 

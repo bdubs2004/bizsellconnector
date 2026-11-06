@@ -25,6 +25,11 @@ class Settings:
     llm_model: str = field(default_factory=lambda: _env("DEALFEED_LLM_MODEL", "claude-haiku-5-5"))
     llm_enabled: bool = field(default_factory=lambda: _env("DEALFEED_LLM", "off") == "on")
 
+    # Entities formed more recently than this are skipped at ingest (0 = keep all).
+    min_age_years: int = field(default_factory=lambda: int(_env("DEALFEED_MIN_AGE_YEARS", "5")))
+    # Optional Socrata app token: raises the anonymous rate limit on state open-data portals.
+    socrata_app_token: str | None = field(default_factory=lambda: _env("SOCRATA_APP_TOKEN"))
+
     # Matching thresholds (rapidfuzz token_sort_ratio, 0-100)
     match_auto: float = field(default_factory=lambda: float(_env("DEALFEED_MATCH_AUTO", "92")))
     match_gray: float = field(default_factory=lambda: float(_env("DEALFEED_MATCH_GRAY", "80")))

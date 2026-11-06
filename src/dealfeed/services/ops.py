@@ -42,7 +42,8 @@ class Ops:
         self._meter("sba_deal_math", 0)
         return out
 
-    def market_summary(self, state: str = "IA", industry: str | None = None, naics_code: str | None = None) -> dict:
+    def market_summary(self, state: str | None = None, industry: str | None = None,
+                       naics_code: str | None = None) -> dict:
         out = search.market_summary(self.conn, state, industry, naics_code)
         self._meter("market_summary", 0)
         return out

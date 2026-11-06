@@ -18,6 +18,14 @@
           {% endfor %}
         </select>
       </label>
+      <label>State
+        <select name="state">
+          <option value="">All states</option>
+          {% for code, name in STATE_NAMES.items() %}
+          <option value="{{ code }}" {% if form.state == code %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </label>
       <label>Counties <span class="hint">comma-separated</span>
         <input name="counties" value="{{ form.counties }}" placeholder="Polk, Story">
       </label>

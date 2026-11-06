@@ -2,8 +2,9 @@
 <div class="results-head">
   <p>
     {% if r.total_matching %}
-    <strong>{{ (page - 1) * page_size + 1 }}–{{ (page - 1) * page_size + r.returned }}</strong> of {{ r.total_matching }} targets
+    <strong>{{ (page - 1) * page_size + 1 }}–{{ (page - 1) * page_size + r.returned }}</strong> of {{ '{:,}'.format(r.total_matching) }}{{ '+' if r.total_is_lower_bound }} targets
     {% if r.filters_applied.industry %}in {{ r.filters_applied.industry|lower }}{% endif %}
+    {% if r.filters_applied.state %}· {{ STATE_NAMES.get(r.filters_applied.state, r.filters_applied.state) }}{% endif %}
     {% else %}
     No targets match these filters.
     {% endif %}
@@ -27,7 +28,7 @@
         <a class="strong" href="/business/{{ t.business_id }}">{{ t.name }}</a>
         <div class="muted small">{{ t.industry or 'Unclassified' }}{% if t.naics_source == 'rules' %} <span class="tag" title="Industry guessed from the business name">name match</span>{% endif %}</div>
       </td>
-      <td>{{ t.city|title if t.city else '–' }}{% if t.county %}<div class="muted small">{{ t.county|title }} County</div>{% endif %}</td>
+      <td>{{ t.city|title if t.city else '–' }}{% if t.state %}, {{ t.state }}{% endif %}{% if t.county %}<div class="muted small">{{ t.county|title }} County</div>{% endif %}</td>
       <td>{{ t.years_in_business if t.years_in_business is not none else '–' }}</td>
       <td>
         {% if t.size_estimate and t.size_estimate.employees %}{{ t.size_estimate.employees }} emp.

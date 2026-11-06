@@ -33,10 +33,10 @@ def stats(conn: psycopg.Connection) -> dict:
         "runs": q("SELECT source, max(finished_at) AS last_ok, sum(rows_loaded) FILTER (WHERE id IN "
                   "(SELECT max(id) FROM pipeline_runs WHERE status='ok' GROUP BY source)) AS last_rows "
                   "FROM pipeline_runs WHERE status = 'ok' GROUP BY source ORDER BY source"),
-        "businesses": q("SELECT status, count(*) AS n FROM businesses GROUP BY status ORDER BY status"),
-        "by_industry": q("SELECT naics_code, naics_source, count(*) AS n FROM businesses "
+        "businesses": q("SELECT state, status, count(*) AS n FROM businesses GROUP BY 1, 2 ORDER BY 1, 2"),
+        "by_industry": q("SELECT state, naics_code, naics_source, count(*) AS n FROM businesses "
                          "WHERE naics_code IN ('561710','561720','524210','811111','541213','541219','561730') "
-                         "GROUP BY 1, 2 ORDER BY 1, 2"),
+                         "GROUP BY 1, 2, 3 ORDER BY 1, 2, 3"),
         "match_methods": q("SELECT source, coalesce(match_method, 'pending') AS method, count(*) AS n "
                            "FROM source_records GROUP BY 1, 2 ORDER BY 1, 2"),
         "pending_reviews": q("SELECT count(*) AS n FROM match_review WHERE status = 'pending'")[0]["n"],

@@ -4,13 +4,16 @@
 
 ```
 migrations/001_init.sql      schema (scope Section 5 + pipeline_runs, match_review, api_keys)
+migrations/002_multistate.sql core_name + denormalized score on businesses, indexes for ~6M rows
 src/dealfeed/
   config.py                  env-based settings
   db.py                      psycopg connection + migration runner
   normalize.py               names, core names, addresses, dates, RA-service detection
   industries.py              v1 + backup industries: NAICS, name rules, payroll/revenue ratios
   ingest/common.py           column mapping, raw-file stash, run log, bulk COPY upsert
-  ingest/ia_sos.py           Iowa SOS loader (drops registered-agent address columns)
+  ingest/states.py           state registry sources (IA CO NY CT OR TX): verified column maps, per-state
+                             filters, streaming loader (csv or zip), paged Socrata downloader with retries
+  states_meta.py             state names / covered-state list
   ingest/sba.py              PPP / 7(a) / 504 loaders (state filter, drops demographics, skips sole props)
   match.py                   spine build, loan-record linking, review queue
   classify.py                NAICS from loans > name rules > Claude (optional)
@@ -37,26 +40,50 @@ tests/                       43 tests on fictional fixtures
 
 ## Key decisions
 
-**Iowa SOS is the spine.** Each SOS entity becomes one business. Its business id equals its
-`source_records.id`, a UUIDv5 of `ia_sos:<corp number>`. IDs are therefore stable across rebuilds,
-so saved targets and API consumers don't break when the pipeline re-runs.
+**State registries are the spine.** Each registry entity becomes one business. Its business id equals its
+`source_records.id`, a UUIDv5 of `<source>:<registry id>` (e.g. `co_sos:19911000001`). IDs are therefore
+stable across rebuilds, so saved targets and API consumers don't break when the pipeline re-runs.
+
+**One mapper per state, one shape out.** Each state in `ingest/states.py` declares its download (Socrata
+dataset + a server-side `$where`, or a URL), its column aliases (API field names and display names), and a
+mapper that returns a common record: normalized entity type, formation date, status
+(active / delinquent), address and what kind of address it is, county, NAICS, people (name + role only),
+DBA names. Rows are skipped with a counted reason (nonprofit, foreign, dissolved, too young), and the
+reasons land in `pipeline_runs.notes`. Only *domestic* entities are kept, so a multi-state company appears
+once, in its home state, with its real formation date.
+
+**Scale (~5.6M businesses).** The raw rows aren't copied into Postgres (the downloaded file is the
+archive), only the mapped fields. The spine upserts just the latest pull. Exact matching is a SQL join on
+`(core_name, zip)`, and fuzzy matching runs one ZIP3 area at a time. Classification is SQL regexes.
+Scoring is keyset-paged in 20k chunks written back with COPY, and `businesses.score` is denormalized so
+search can use an index per (state, industry). Search counts stop at 10,000 ("10,000+").
 
 **`source_records` holds everything.** Each row has `canon` (fields mapped to our shape and normalized at
 ingest) and `raw` (the original row minus columns we deliberately don't keep). `raw` is never served.
 Untouched source files are kept in `DEALFEED_RAW_DIR/<source>/<date>/` for reprocessing.
 
 **Matching** (`match.py`) links PPP/7(a)/504 records to businesses:
-exact core-name+ZIP → fuzzy (rapidfuzz `token_sort_ratio`, same ZIP, else same city, +5 for same street
-address) → ≥92 auto-link, 80–92 to Claude if enabled, then to `match_review`. Two near-equal top candidates
-always go to review. Unmatched PPP borrowers become their own business (`primary_source = 'ppp'`). Manual
-decisions survive `build --rematch`, and rejected pairs are never proposed again.
+1. Exact core name + ZIP, in SQL.
+2. Fuzzy match (rapidfuzz `token_sort_ratio`): same ZIP first, else same city, +5 for the same street
+   address. A score of 92 or more links automatically.
+3. Scores from 80 to 92: an identical street address links; otherwise the record goes to Claude if
+   enabled, then to `match_review`, but only for industries we sell. Anything else in that range stays
+   unlinked, so the queue stays readable.
+4. Two near-equal top candidates always go to review.
+5. Unmatched PPP borrowers become their own business (`primary_source = 'ppp'`).
 
-**Inactive detection.** A business whose SOS record wasn't in the latest successful `ia_sos` run is marked
-`inactive` on the next build (scope 3.4: flagged within one cycle).
+Manual decisions survive `build --rematch`, and rejected pairs are never proposed again.
+
+**Inactive detection.** A business whose registry record wasn't in its state's latest successful pull is
+marked `inactive` on the next build (scope 3.4: flagged within one cycle). Colorado and Texas also report
+"delinquent" (behind on filings / franchise tax), which costs 20 points.
 
 **Registered-agent tenure** comes from `business_people.first_seen/last_seen`, which widen with every
 monthly pull. The "same agent 15+ years" signal therefore can't fire until there is history. v1 uses
 "registered agent is an individual, not a commercial RA service" as a weaker owner-operated proxy.
+
+**Classification** order: NAICS from a linked SBA loan, then NAICS from the state filing (CT, TX), then name
+rules (Postgres regexes compiled from `industries.py`, `\b` → `\y`), then Claude if enabled.
 
 **Score** (`score.py`): base 30, then signed points per signal, clamped to 0–100. Weights are in `WEIGHTS`.
 Bump `MODEL_VERSION` when you change them. Each score stores its `breakdown`, so `explain_score` is exact.
@@ -68,6 +95,8 @@ jobs ±25–30%; revenue from placeholder industry payroll ratios. Revenue ratio
 real benchmarks before customers see them.
 
 **Privacy rules enforced in code** (scope 2.6), all tested:
+- only mapped business-level fields are stored from registry files; agent/officer/CEO addresses,
+  emails and owner-demographic flags (CT) are never mapped, so they never reach the database
 - registered-agent address columns are dropped at ingest (often the owner's home)
 - PPP race/ethnicity/gender/veteran columns are dropped
 - PPP loans to sole proprietors, self-employed individuals and independent contractors are skipped

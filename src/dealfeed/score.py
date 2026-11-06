@@ -13,9 +13,10 @@ from datetime import date, datetime, timezone
 import psycopg
 
 from .industries import BY_NAICS
+from .states_meta import STATE_NAMES
 from .normalize import looks_like_ra_service
 
-MODEL_VERSION = "rules-v1.0"
+MODEL_VERSION = "rules-v1.1"
 
 WEIGHTS = {
     "base": 30,
@@ -33,6 +34,7 @@ WEIGHTS = {
     "change_of_ownership": -45,     # 7(a)/504 flagged "Change of Ownership" within 6 years
     "older_sba_loan": -15,          # 7(a)/504 3-6 years ago
     "inactive": -40,
+    "delinquent": -20,              # behind on state filings / franchise tax
     "stale_website": 10,            # set by website enrichment (Phase 4)
     "no_website": 8,
 }
@@ -82,11 +84,17 @@ def evaluate(biz: dict, size: dict | None, loans: list[dict], people: list[dict]
         else:
             fired.append(Fired("business_age", 0, f"Operating since {fd.year} ({age} yrs)", v))
     else:
-        fired.append(Fired("business_age", 0, "Formation date unknown (not an Iowa SOS entity)", {}))
+        fired.append(Fired("business_age", 0, "Formation date unknown (not in a state registry we load)", {}))
 
     # Status
+    registry = STATE_NAMES.get(biz.get("state") or "", "state")
     if biz.get("status") == "inactive":
-        fired.append(Fired("inactive", WEIGHTS["inactive"], "Not in the latest Iowa SOS active-entity list", {}))
+        fired.append(Fired("inactive", WEIGHTS["inactive"], f"No longer in the latest {registry} registry pull", {}))
+    elif biz.get("status") == "delinquent":
+        since = biz.get("status_since")
+        fired.append(Fired("delinquent", WEIGHTS["delinquent"],
+                           f"Behind on {registry} filings" + (f" since {since.year}" if since else ""),
+                           {"since": since.isoformat() if since else None}))
 
     # Registered agent
     ra = [p for p in people if p["role"] == "registered agent"]
@@ -165,56 +173,69 @@ def evaluate(biz: dict, size: dict | None, loans: list[dict], people: list[dict]
 
 
 ENRICHMENT_SIGNALS = ("stale_website", "no_website")
+CHUNK = 20_000
+
+_CHUNK_SQL = """
+SELECT b.id, b.formation_date, b.status, b.status_since, b.naics_code, b.state,
+       se.employees_low, se.employees_high, se.payroll_low, se.payroll_high, se.as_of,
+       acq.program, acq.approval_date, acq.business_age_desc,
+       ra.name AS ra_name, ra.first_seen AS ra_first_seen, ra.last_seen AS ra_last_seen
+  FROM businesses b
+  LEFT JOIN LATERAL (SELECT employees_low, employees_high, payroll_low, payroll_high, as_of FROM size_estimates x
+                      WHERE x.business_id = b.id ORDER BY as_of DESC NULLS LAST LIMIT 1) se ON true
+  LEFT JOIN LATERAL (SELECT program, approval_date, business_age_desc FROM sba_loans l
+                      WHERE l.business_id = b.id AND l.program IN ('7a', '504') AND l.approval_date IS NOT NULL
+                      ORDER BY approval_date DESC LIMIT 1) acq ON true
+  LEFT JOIN LATERAL (SELECT name, first_seen, last_seen FROM business_people p
+                      WHERE p.business_id = b.id AND p.role = 'registered agent'
+                      ORDER BY last_seen DESC NULLS LAST LIMIT 1) ra ON true
+ WHERE b.id > %(after)s
+ ORDER BY b.id
+ LIMIT %(limit)s
+"""
 
 
 def score_all(conn: psycopg.Connection, today: date | None = None) -> dict:
+    """Score every business in keyset-paged chunks so memory stays flat at ~10M rows.
+    Writes `scores` (with the point-by-point breakdown) and the denormalized businesses.score
+    that search sorts on."""
     today = today or date.today()
     now = datetime.now(timezone.utc)
-    businesses = conn.execute(
-        "SELECT id, formation_date, status, naics_code FROM businesses"
-    ).fetchall()
-    sizes = {r["business_id"]: r for r in conn.execute(
-        "SELECT DISTINCT ON (business_id) * FROM size_estimates ORDER BY business_id, as_of DESC NULLS LAST"
-    ).fetchall()}
-    loans: dict = {}
-    for r in conn.execute(
-        "SELECT business_id, program, approval_date, business_age_desc FROM sba_loans WHERE business_id IS NOT NULL"
-    ).fetchall():
-        loans.setdefault(r["business_id"], []).append(r)
-    people: dict = {}
-    for r in conn.execute("SELECT business_id, name, role, first_seen, last_seen FROM business_people").fetchall():
-        people.setdefault(r["business_id"], []).append(r)
-    extra: dict = {}
-    for r in conn.execute("SELECT business_id, signal_type, value FROM signals WHERE signal_type = ANY(%s)",
-                          (list(ENRICHMENT_SIGNALS),)).fetchall():
-        extra.setdefault(r["business_id"], {})[r["signal_type"]] = r["value"] or {}
-
-    score_rows, signal_rows = [], []
-    for b in businesses:
-        bid = b["id"]
-        total, fired = evaluate(b, sizes.get(bid), loans.get(bid, []), people.get(bid, []), extra.get(bid, {}), today)
-        ordered = sorted(fired, key=lambda f: -abs(f.points))
-        breakdown = [{"signal": f.signal, "points": f.points, "reason": f.reason} for f in ordered]
-        score_rows.append((bid, total, [f.reason for f in ordered], json.dumps(breakdown), MODEL_VERSION, now))
-        for f in fired:
-            if f.signal in ENRICHMENT_SIGNALS:
-                continue
-            signal_rows.append((uuid.uuid5(uuid.NAMESPACE_URL, f"signal:{bid}:{f.signal}"), bid, f.signal,
-                                json.dumps(f.value), f.points, now))
-    with conn.cursor() as cur:
-        cur.execute("DELETE FROM signals WHERE NOT (signal_type = ANY(%s))", (list(ENRICHMENT_SIGNALS),))
-        cur.executemany(
-            "INSERT INTO signals (id, business_id, signal_type, value, weight, observed_at) VALUES (%s,%s,%s,%s,%s,%s) "
-            "ON CONFLICT (business_id, signal_type) DO UPDATE SET value = EXCLUDED.value, weight = EXCLUDED.weight, "
-            "observed_at = EXCLUDED.observed_at",
-            signal_rows,
-        )
-        cur.executemany(
+    after = uuid.UUID(int=0)
+    total = 0
+    while True:
+        rows = conn.execute(_CHUNK_SQL, {"after": after, "limit": CHUNK}).fetchall()
+        if not rows:
+            break
+        ids = [r["id"] for r in rows]
+        extra: dict = {}
+        for e in conn.execute("SELECT business_id, signal_type, value FROM signals "
+                              "WHERE business_id = ANY(%s) AND signal_type = ANY(%s)",
+                              (ids, list(ENRICHMENT_SIGNALS))).fetchall():
+            extra.setdefault(e["business_id"], {})[e["signal_type"]] = e["value"] or {}
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS _scores (business_id UUID, score INT, reasons TEXT[], "
+                     "breakdown JSONB) ON COMMIT DROP")
+        with conn.cursor().copy("COPY _scores (business_id, score, reasons, breakdown) FROM STDIN") as cp:
+            for r in rows:
+                size = r if r["employees_low"] is not None or r["payroll_low"] is not None else None
+                loans = [{"program": r["program"], "approval_date": r["approval_date"],
+                          "business_age_desc": r["business_age_desc"]}] if r["program"] else []
+                people = [{"name": r["ra_name"], "role": "registered agent", "first_seen": r["ra_first_seen"],
+                           "last_seen": r["ra_last_seen"]}] if r["ra_name"] else []
+                score, fired = evaluate(r, size, loans, people, extra.get(r["id"], {}), today)
+                ordered = sorted(fired, key=lambda f: -abs(f.points))
+                breakdown = [{"signal": f.signal, "points": f.points, "reason": f.reason} for f in ordered]
+                cp.write_row((r["id"], score, [f.reason for f in ordered], json.dumps(breakdown)))
+        conn.execute(
             "INSERT INTO scores (business_id, score, reasons, breakdown, model_version, scored_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (business_id) DO UPDATE SET score = EXCLUDED.score, "
-            "reasons = EXCLUDED.reasons, breakdown = EXCLUDED.breakdown, model_version = EXCLUDED.model_version, "
-            "scored_at = EXCLUDED.scored_at",
-            score_rows,
+            "SELECT business_id, score, reasons, breakdown, %(mv)s, %(now)s FROM _scores "
+            "ON CONFLICT (business_id) DO UPDATE SET score = EXCLUDED.score, reasons = EXCLUDED.reasons, "
+            "breakdown = EXCLUDED.breakdown, model_version = EXCLUDED.model_version, scored_at = EXCLUDED.scored_at",
+            {"mv": MODEL_VERSION, "now": now},
         )
-    conn.commit()
-    return {"scored": len(score_rows), "model_version": MODEL_VERSION}
+        conn.execute("UPDATE businesses b SET score = t.score FROM _scores t "
+                     "WHERE t.business_id = b.id AND b.score IS DISTINCT FROM t.score")
+        conn.commit()
+        total += len(rows)
+        after = ids[-1]
+    return {"scored": total, "model_version": MODEL_VERSION}

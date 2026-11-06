@@ -1,15 +1,16 @@
-"""Entity resolution (scope 3.2 step 3).
+"""Entity resolution (scope 3.2 step 3), built for ~10M businesses across states.
 
-The Iowa SOS file is the spine: each SOS entity becomes one business, and its
-business id equals its source_record id so it is stable across rebuilds.
-SBA records (PPP, 7(a), 504) are then linked to those businesses:
+State registries are the spine: each registry entity becomes one business whose id
+equals its source_record id (stable across rebuilds). SBA records (PPP, 7(a), 504)
+are then linked to those businesses:
 
-  1. exact match on core name + ZIP
-  2. fuzzy match (rapidfuzz) within the same ZIP, falling back to the same city
-  3. gray-zone scores go to Claude (if enabled), then to the manual review queue
-  4. unmatched PPP borrowers become their own business (they were operating in
-     2020-21 even if they aren't an SOS entity, e.g. DBAs filed by county);
-     unmatched 7(a)/504 records stay unlinked
+  1. exact match on core name + ZIP, in SQL
+  2. fuzzy match (rapidfuzz) for the rest, processed one ZIP3 area at a time so
+     memory stays bounded; same ZIP first, then same city
+  3. gray-zone scores: same street address -> match; else Claude (if enabled); else
+     the manual review queue, but only for records in an industry we sell (otherwise
+     the queue would grow to hundreds of thousands of rows nobody will read)
+  4. unmatched PPP borrowers become their own business; unmatched 7(a)/504 stay unlinked
 """
 from __future__ import annotations
 
@@ -22,64 +23,117 @@ from rapidfuzz import fuzz, process
 
 from . import llm
 from .config import get_settings
+from .industries import BY_NAICS
+from .ingest.states import STATE_SOURCE_KEYS
 
 log = logging.getLogger(__name__)
 
 LOAN_SOURCES = ("ppp", "sba_7a", "sba_504")
 
 
+def _latest_runs(conn: psycopg.Connection) -> dict[str, int]:
+    rows = conn.execute(
+        "SELECT source, max(id) AS run_id FROM pipeline_runs WHERE status = 'ok' AND source = ANY(%s) GROUP BY source",
+        (list(STATE_SOURCE_KEYS),),
+    ).fetchall()
+    return {r["source"]: r["run_id"] for r in rows}
+
+
 def build_spine(conn: psycopg.Connection) -> dict:
-    """Upsert businesses from IA SOS records and mark ones missing from the latest pull inactive."""
-    latest = conn.execute(
-        "SELECT max(id) AS id FROM pipeline_runs WHERE source = 'ia_sos' AND status = 'ok'"
-    ).fetchone()["id"]
-    if latest is None:
-        return {"businesses": 0, "note": "no successful ia_sos run yet"}
+    """Upsert businesses from the latest pull of every state registry; mark entities missing
+    from their state's latest pull inactive."""
+    latest = _latest_runs(conn)
+    if not latest:
+        return {"note": "no state registry loaded yet"}
+    runs = list(latest.values())
     conn.execute(
         """
-        INSERT INTO businesses (id, legal_name, normalized_name, entity_type, state_of_formation, formation_date,
-                                status, address_line1, city, state, zip, primary_source, updated_at)
-        SELECT sr.id, sr.canon->>'legal_name', sr.canon->>'normalized_name', sr.canon->>'entity_type',
-               sr.canon->>'state_of_formation', (sr.canon->>'formation_date')::date,
-               CASE WHEN sr.run_id = %(latest)s THEN 'active' ELSE 'inactive' END,
-               sr.canon->>'address_line1', sr.canon->>'city', coalesce(sr.canon->>'state', 'IA'),
-               sr.canon->>'zip5', 'ia_sos', now()
-          FROM source_records sr
-         WHERE sr.source = 'ia_sos'
+        INSERT INTO businesses (id, legal_name, normalized_name, core_name, dba_names, entity_type, state_of_formation,
+                                formation_date, status, status_since, address_line1, address_kind, city, state, zip,
+                                county, latitude, longitude, primary_source, updated_at)
+        SELECT sr.id, c->>'legal_name', c->>'normalized_name', c->>'core_name',
+               ARRAY(SELECT jsonb_array_elements_text(coalesce(c->'dba_names', '[]'))),
+               c->>'entity_type', c->>'registry_state', (c->>'formation_date')::date,
+               coalesce(c->>'status', 'active'), (c->>'status_since')::date,
+               c->>'address_line1', c->>'address_kind', c->>'city', c->>'registry_state', c->>'zip5',
+               c->>'county', (c->>'latitude')::real, (c->>'longitude')::real, sr.source, now()
+          FROM source_records sr, LATERAL (SELECT sr.canon AS c) x
+         WHERE sr.run_id = ANY(%(runs)s)
         ON CONFLICT (id) DO UPDATE SET
             legal_name = EXCLUDED.legal_name, normalized_name = EXCLUDED.normalized_name,
-            entity_type = EXCLUDED.entity_type, state_of_formation = EXCLUDED.state_of_formation,
-            formation_date = EXCLUDED.formation_date, status = EXCLUDED.status,
-            address_line1 = EXCLUDED.address_line1, city = EXCLUDED.city, state = EXCLUDED.state,
-            zip = EXCLUDED.zip, updated_at = now()
+            core_name = EXCLUDED.core_name, dba_names = EXCLUDED.dba_names, entity_type = EXCLUDED.entity_type,
+            state_of_formation = EXCLUDED.state_of_formation, formation_date = EXCLUDED.formation_date,
+            status = EXCLUDED.status, status_since = EXCLUDED.status_since,
+            address_line1 = EXCLUDED.address_line1, address_kind = EXCLUDED.address_kind, city = EXCLUDED.city,
+            state = EXCLUDED.state, zip = EXCLUDED.zip,
+            -- keep values filled in later (geocoder, PPP county) when the registry has none
+            county = coalesce(EXCLUDED.county, businesses.county),
+            latitude = coalesce(EXCLUDED.latitude, businesses.latitude),
+            longitude = coalesce(EXCLUDED.longitude, businesses.longitude),
+            updated_at = now()
         """,
-        {"latest": latest},
+        {"runs": runs},
     )
+    gone = conn.execute(
+        """
+        UPDATE businesses b SET status = 'inactive', updated_at = now()
+          FROM source_records sr
+         WHERE sr.id = b.id AND sr.source = ANY(%(srcs)s) AND NOT (sr.run_id = ANY(%(runs)s))
+           AND b.status <> 'inactive'
+        """,
+        {"srcs": list(latest), "runs": runs},
+    ).rowcount
     conn.execute(
         "UPDATE source_records SET business_id = id, match_method = 'spine', match_score = 100 "
-        "WHERE source = 'ia_sos' AND business_id IS DISTINCT FROM id"
+        "WHERE source = ANY(%s) AND business_id IS NULL",
+        (list(STATE_SOURCE_KEYS),),
     )
-    # Registered agent as a public-filing person. first_seen/last_seen widen over monthly pulls,
-    # which is what the "same agent for 15+ years" signal will eventually rely on.
+    # People named on the filing. first_seen/last_seen widen with each monthly pull, which is what
+    # the "same agent for 15+ years" signal will eventually rely on.
     conn.execute(
         """
         INSERT INTO business_people (id, business_id, name, role, first_seen, last_seen, source)
-        SELECT md5(sr.id::text || upper(sr.canon->>'ra_name') || 'registered agent')::uuid, sr.id,
-               upper(sr.canon->>'ra_name'), 'registered agent',
-               sr.first_seen_at::date, sr.pulled_at::date, 'ia_sos'
-          FROM source_records sr
-         WHERE sr.source = 'ia_sos' AND coalesce(sr.canon->>'ra_name', '') <> ''
+        SELECT md5(sr.id::text || (p->>'name') || (p->>'role'))::uuid, sr.id, p->>'name', p->>'role',
+               sr.first_seen_at::date, sr.pulled_at::date, sr.source
+          FROM source_records sr, jsonb_array_elements(coalesce(sr.canon->'people', '[]')) p
+         WHERE sr.run_id = ANY(%(runs)s)
         ON CONFLICT (business_id, name, role, source) DO UPDATE
            SET last_seen = greatest(business_people.last_seen, EXCLUDED.last_seen),
                first_seen = least(business_people.first_seen, EXCLUDED.first_seen)
-        """
+        """,
+        {"runs": runs},
     )
     counts = conn.execute(
-        "SELECT count(*) FILTER (WHERE status = 'active') AS active, count(*) FILTER (WHERE status = 'inactive') AS inactive "
-        "FROM businesses WHERE primary_source = 'ia_sos'"
-    ).fetchone()
+        "SELECT state, count(*) FILTER (WHERE status = 'active') AS active, "
+        "count(*) FILTER (WHERE status = 'delinquent') AS delinquent, "
+        "count(*) FILTER (WHERE status = 'inactive') AS inactive "
+        "FROM businesses WHERE primary_source = ANY(%s) GROUP BY state ORDER BY state",
+        (list(STATE_SOURCE_KEYS),),
+    ).fetchall()
     conn.commit()
-    return dict(counts)
+    return {"by_state": {r["state"]: {k: r[k] for k in ("active", "delinquent", "inactive")} for r in counts},
+            "marked_inactive_this_build": gone}
+
+
+# --- loan linking ------------------------------------------------------------------------------
+
+def _exact_sql(conn: psycopg.Connection) -> int:
+    """Link loan records whose core name + ZIP match exactly one business and wasn't rejected."""
+    return conn.execute(
+        """
+        WITH cand AS (
+            SELECT sr.id AS rid, b.id AS bid, count(*) OVER (PARTITION BY sr.id) AS n
+              FROM source_records sr
+              JOIN businesses b ON b.core_name = sr.canon->>'core_name' AND b.zip = sr.canon->>'zip5'
+             WHERE sr.source = ANY(%(srcs)s) AND sr.match_method IS NULL AND coalesce(sr.canon->>'core_name', '') <> ''
+               AND NOT EXISTS (SELECT 1 FROM match_review r WHERE r.source_record_id = sr.id
+                                AND r.candidate_business = b.id AND r.status = 'rejected')
+        )
+        UPDATE source_records s SET business_id = c.bid, match_method = 'exact', match_score = 100
+          FROM cand c WHERE c.rid = s.id AND c.n = 1
+        """,
+        {"srcs": list(LOAN_SOURCES)},
+    ).rowcount
 
 
 @dataclass
@@ -89,25 +143,18 @@ class _Cand:
     zip: str | None
     city: str | None
     address: str | None
-    rec: dict
+    name: str
 
 
 class _Index:
-    def __init__(self, rows: list[dict]):
+    def __init__(self):
         self.exact: dict[tuple[str, str | None], list[_Cand]] = defaultdict(list)
         self.by_zip: dict[str, list[_Cand]] = defaultdict(list)
         self.by_city: dict[str, list[_Cand]] = defaultdict(list)
-        for r in rows:
-            c = _Cand(str(r["id"]), r["core_name"] or "", r["zip"], r["city"], r["address_line1"], r)
-            if not c.core:
-                continue
-            self.exact[(c.core, c.zip)].append(c)
-            if c.zip:
-                self.by_zip[c.zip].append(c)
-            if c.city:
-                self.by_city[c.city].append(c)
 
     def add(self, c: _Cand) -> None:
+        if not c.core:
+            return
         self.exact[(c.core, c.zip)].append(c)
         if c.zip:
             self.by_zip[c.zip].append(c)
@@ -129,70 +176,88 @@ def _best(rec: dict, idx: _Index, gray: float) -> list[tuple[_Cand, float]]:
     hits = process.extract(rec["core_name"], [c.core for c in pool], scorer=fuzz.token_sort_ratio,
                            score_cutoff=gray - 5, limit=5)
     scored = [(pool[i], _score(rec, pool[i])) for _, _, i in hits]
-    scored = [(c, s) for c, s in scored if s >= gray]
-    return sorted(scored, key=lambda x: -x[1])
+    return sorted([(c, s) for c, s in scored if s >= gray], key=lambda x: -x[1])
 
 
 def link_loan_records(conn: psycopg.Connection, rematch: bool = False) -> dict:
     s = get_settings()
+    stats: dict[str, int] = defaultdict(int)
     if rematch:
         conn.execute(
             "UPDATE source_records SET business_id = NULL, match_method = NULL, match_score = NULL "
-            "WHERE source = ANY(%s) AND match_method IN ('exact', 'fuzzy', 'llm', 'unmatched', 'review')",
+            "WHERE source = ANY(%s) AND match_method IN ('exact', 'fuzzy', 'address', 'llm', 'unmatched', 'review')",
             (list(LOAN_SOURCES),),
         )
         conn.execute("DELETE FROM match_review WHERE status = 'pending'")
 
-    biz = conn.execute(
-        "SELECT b.id, b.legal_name, b.address_line1, b.city, b.zip, "
-        "       coalesce(sr.canon->>'core_name', '') AS core_name "
-        "  FROM businesses b LEFT JOIN source_records sr ON sr.id = b.id"
-    ).fetchall()
-    # Businesses created from PPP-only records don't have an SOS record; compute their core name.
-    from .normalize import core_name
-    for b in biz:
-        if not b["core_name"]:
-            b["core_name"] = core_name(b["legal_name"])
-    idx = _Index(biz)
+    stats["exact"] = _exact_sql(conn)
+    conn.commit()
 
-    todo = conn.execute(
+    pending = conn.execute(
         "SELECT id, source, canon FROM source_records WHERE source = ANY(%s) AND match_method IS NULL "
         "ORDER BY source = 'ppp' DESC, (canon->>'approval_date') NULLS LAST",
         (list(LOAN_SOURCES),),
     ).fetchall()
-
     rejected = {(str(r["source_record_id"]), str(r["candidate_business"])) for r in conn.execute(
         "SELECT source_record_id, candidate_business FROM match_review WHERE status = 'rejected'").fetchall()}
 
-    stats = defaultdict(int)
-    updates: list[tuple] = []         # (business_id, method, score, record_id)
-    reviews: list[tuple] = []         # (record_id, business_id, score, verdict)
-    new_biz: list[dict] = []
+    # Group by ZIP3 so each chunk only loads nearby businesses.
+    by_area: dict[str, list[dict]] = defaultdict(list)
+    for r in pending:
+        z = r["canon"].get("zip5") or ""
+        by_area[z[:3] if len(z) == 5 else f"city:{r['canon'].get('state')}:{r['canon'].get('city')}"].append(r)
 
-    for row in todo:
-        rec = row["canon"]
-        rid = str(row["id"])
+    for area, recs in by_area.items():
+        if area.startswith("city:"):
+            _, st, city = area.split(":", 2)
+            rows = conn.execute("SELECT id, legal_name, core_name, zip, city, address_line1 FROM businesses "
+                                "WHERE state = %s AND city = %s", (st, city)).fetchall()
+        else:
+            rows = conn.execute("SELECT id, legal_name, core_name, zip, city, address_line1 FROM businesses "
+                                "WHERE left(zip, 3) = %s", (area,)).fetchall()
+        idx = _Index()
+        for b in rows:
+            idx.add(_Cand(str(b["id"]), b["core_name"] or "", b["zip"], b["city"], b["address_line1"], b["legal_name"]))
+        _link_area(conn, recs, idx, rejected, s, stats)
+        conn.commit()
+
+    sync_loan_links(conn)
+    conn.commit()
+    return dict(stats)
+
+
+def _link_area(conn, recs, idx: _Index, rejected, s, stats) -> None:
+    updates: list[tuple] = []
+    reviews: list[tuple] = []
+    new_biz: list[dict] = []
+    for row in recs:
+        rec, rid = row["canon"], str(row["id"])
         if not rec.get("core_name"):
             updates.append((None, "unmatched", None, rid))
             stats["unmatched"] += 1
             continue
         exact = [c for c in idx.exact.get((rec["core_name"], rec.get("zip5")), []) if (rid, c.id) not in rejected]
-        if len(exact) == 1:
+        if len(exact) == 1:          # e.g. a business created earlier in this same build
             updates.append((exact[0].id, "exact", 100.0, rid))
             stats["exact"] += 1
             continue
-        cands = exact and [(c, 100.0) for c in exact] or _best(rec, idx, s.match_gray)
+        cands = [(c, 100.0) for c in exact] if exact else _best(rec, idx, s.match_gray)
         cands = [(c, sc) for c, sc in cands if (rid, c.id) not in rejected]
         top = cands[0] if cands else None
-        ambiguous = len(cands) > 1 and cands[1][1] >= top[1] - 2 and top[1] >= s.match_auto
+        ambiguous = bool(top) and len(cands) > 1 and cands[1][1] >= top[1] - 2 and top[1] >= s.match_auto
         if top and top[1] >= s.match_auto and not ambiguous:
             updates.append((top[0].id, "fuzzy", top[1], rid))
             stats["fuzzy"] += 1
             continue
-        if top and (ambiguous or top[1] >= s.match_gray):
+        if top and not ambiguous and rec.get("address_line1") and rec["address_line1"] == top[0].address:
+            updates.append((top[0].id, "address", top[1], rid))
+            stats["address"] += 1
+            continue
+        if top:
             verdict = None
             if llm.enabled() and not ambiguous:
-                v = llm.same_business(top[0].rec | {"zip5": top[0].zip}, rec)
+                v = llm.same_business({"legal_name": top[0].name, "address_line1": top[0].address,
+                                       "city": top[0].city, "zip5": top[0].zip}, rec)
                 verdict = v.verdict if v else None
                 if verdict == "yes":
                     updates.append((top[0].id, "llm", top[1], rid))
@@ -200,18 +265,23 @@ def link_loan_records(conn: psycopg.Connection, rematch: bool = False) -> dict:
                     continue
                 if verdict == "no":
                     stats["llm_no"] += 1
-                    top = None   # fall through to "no match"
-            if top:
+                    top = None
+            if top and (rec.get("naics") or "") in BY_NAICS:
                 for c, sc in cands[:3]:
                     reviews.append((rid, c.id, sc, verdict))
                 updates.append((None, "review", top[1], rid))
                 stats["review"] += 1
                 continue
-        # No match
+            if top:
+                # Gray zone outside our industries: not worth a human's time. Don't link, don't create.
+                updates.append((None, "unmatched", top[1], rid))
+                stats["unmatched_gray"] += 1
+                continue
         if row["source"] == "ppp":
             new_biz.append({"id": rid, **rec})
             updates.append((rid, "new", None, rid))
-            idx.add(_Cand(rid, rec["core_name"], rec.get("zip5"), rec.get("city"), rec.get("address_line1"), rec))
+            idx.add(_Cand(rid, rec["core_name"], rec.get("zip5"), rec.get("city"), rec.get("address_line1"),
+                          rec.get("legal_name") or ""))
             stats["new_from_ppp"] += 1
         else:
             updates.append((None, "unmatched", None, rid))
@@ -221,26 +291,19 @@ def link_loan_records(conn: psycopg.Connection, rematch: bool = False) -> dict:
         if new_biz:
             cur.executemany(
                 """
-                INSERT INTO businesses (id, legal_name, normalized_name, status, address_line1, city, state, zip,
-                                        county, primary_source)
-                VALUES (%(id)s, %(legal_name)s, %(normalized_name)s, 'unknown', %(address_line1)s, %(city)s,
-                        %(state)s, %(zip5)s, %(county)s, 'ppp')
+                INSERT INTO businesses (id, legal_name, normalized_name, core_name, status, address_line1, city,
+                                        state, zip, county, primary_source)
+                VALUES (%(id)s, %(legal_name)s, %(normalized_name)s, %(core_name)s, 'unknown', %(address_line1)s,
+                        %(city)s, %(state)s, %(zip5)s, %(county)s, 'ppp')
                 ON CONFLICT (id) DO NOTHING
                 """,
                 new_biz,
             )
         cur.executemany(
-            "UPDATE source_records SET business_id = %s, match_method = %s, match_score = %s WHERE id = %s",
-            updates,
-        )
+            "UPDATE source_records SET business_id = %s, match_method = %s, match_score = %s WHERE id = %s", updates)
         cur.executemany(
             "INSERT INTO match_review (source_record_id, candidate_business, score, llm_verdict) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-            reviews,
-        )
-    sync_loan_links(conn)
-    conn.commit()
-    return dict(stats)
+            "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING", reviews)
 
 
 def sync_loan_links(conn: psycopg.Connection) -> None:
@@ -248,7 +311,7 @@ def sync_loan_links(conn: psycopg.Connection) -> None:
         "UPDATE sba_loans l SET business_id = sr.business_id FROM source_records sr "
         "WHERE sr.id = l.source_record_id AND l.business_id IS DISTINCT FROM sr.business_id"
     )
-    # Fill county from PPP project county where the business has none yet.
+    # Fill county from the PPP project county where the business has none yet.
     conn.execute(
         """
         UPDATE businesses b SET county = x.county FROM (
@@ -276,8 +339,6 @@ def resolve_review(conn: psycopg.Connection, review_id: int, accept: bool) -> di
         if left == 0:
             # Every candidate rejected: let the next build treat it as a non-match.
             conn.execute("UPDATE source_records SET match_method = NULL WHERE id = %s AND match_method = 'review'",
-                         (r["source_record_id"],))
-            conn.execute("UPDATE match_review SET status = 'rejected' WHERE source_record_id = %s",
                          (r["source_record_id"],))
     sync_loan_links(conn)
     conn.commit()

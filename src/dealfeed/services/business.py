@@ -8,10 +8,11 @@ import psycopg
 
 from ..industries import BY_NAICS
 from ..score import MODEL_VERSION, WEIGHTS
+from ..ingest.states import SOURCES as STATE_SOURCES
 from .search import BASE_SELECT, DATA_CAVEAT, size_summary, target_summary
 
 SOURCE_LABELS = {
-    "ia_sos": "Iowa Secretary of State, Active Iowa Business Entities (data.iowa.gov, CC BY 4.0)",
+    **{k: src.attribution for k, src in STATE_SOURCES.items()},
     "ppp": "SBA Paycheck Protection Program loan data (data.sba.gov)",
     "sba_7a": "SBA 7(a) loan data (data.sba.gov)",
     "sba_504": "SBA 504 loan data (data.sba.gov)",
@@ -60,9 +61,14 @@ def get_business(conn: psycopg.Connection, business_id: str, user_id=None, today
     return {
         **summary,
         "entity_type": row.get("entity_type"),
+        "registry": SOURCE_LABELS.get(row.get("primary_source"), row.get("primary_source")),
+        "dba_names": row.get("dba_names") or [],
         "address": {
             "line1": row.get("address_line1"), "city": row.get("city"), "state": row.get("state"),
             "zip": row.get("zip"), "county": row.get("county"),
+            "kind": {"service_of_process": "Address for service of process (no business location on file)",
+                     "location": "Business location", "principal": "Principal office"}.get(row.get("address_kind") or "",
+                                                                                          "Address on file"),
             "source": SOURCE_LABELS.get(row.get("primary_source"), row.get("primary_source")),
         },
         "industry_detail": {

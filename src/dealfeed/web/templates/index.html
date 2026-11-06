@@ -3,10 +3,10 @@
 {% block content %}
 <section class="hero">
   <p class="eyebrow">For search funds and self-funded searchers</p>
-  <h1>Iowa businesses that aren't for sale yet but probably will be.</h1>
-  <p class="lede">Every active Iowa business entity, matched to SBA loan records, sized from public PPP data,
-    and scored on how likely it is to sell in the next few years. Every score shows its reasons.
-    Search it here or ask Claude to do it for you.</p>
+  <h1>Small businesses that aren't for sale yet but probably will be.</h1>
+  <p class="lede">Established businesses from the public registries of {{ COVERED_STATES }}, matched to SBA loan
+    records, sized from public PPP data, and scored on how likely they are to sell in the next few years.
+    Every score shows its reasons. Search it here or ask Claude to do it for you.</p>
   <div class="hero-cta">
     {% if user %}
     <a class="btn" href="/search">Search targets</a>
@@ -34,7 +34,7 @@
           <span class="score score-{{ t.score|score_band }}">{{ t.score }}</span>
           <div>
             <a class="strong" href="/business/{{ t.business_id }}">{{ t.name }}</a>
-            <div class="muted small">{{ t.city|title if t.city else '' }}{% if t.years_in_business %} · {{ t.years_in_business }} yrs{% endif %}{% if t.size_estimate and t.size_estimate.employees %} · ~{{ t.size_estimate.employees }} employees{% endif %}</div>
+            <div class="muted small">{{ t.city|title if t.city else '' }}{% if t.state %}, {{ t.state }}{% endif %}{% if t.years_in_business %} · {{ t.years_in_business }} yrs{% endif %}{% if t.size_estimate and t.size_estimate.employees %} · ~{{ t.size_estimate.employees }} employees{% endif %}</div>
             {% if t.top_reasons %}<div class="small reason">{{ t.top_reasons[0] }}</div>{% endif %}
           </div>
         </li>

@@ -9,7 +9,7 @@
     <h1>{{ b.name }}</h1>
     <p class="muted">
       {{ b.industry or 'Industry unclassified' }}{% if b.naics_code %} · NAICS {{ b.naics_code }}{% endif %}
-      {% if b.address.city %} · {{ b.address.city|title }}{% if b.address.county %}, {{ b.address.county|title }} County{% endif %}{% endif %}
+      {% if b.address.city %} · {{ b.address.city|title }}, {{ b.state }}{% if b.address.county %} ({{ b.address.county|title }} County){% endif %}{% endif %}
       {% if b.years_in_business is not none %} · {{ b.years_in_business }} years in business{% endif %}
       · <span class="status status-{{ b.status }}">{{ b.status }}</span>
     </p>
@@ -64,8 +64,10 @@
     <section class="card">
       <h2 class="h-sm">Business details</h2>
       <dl class="facts">
-        <div><dt>Address</dt><dd>{{ b.address.line1 or '–' }}<br>{{ b.address.city or '' }}{% if b.address.city %}, {% endif %}{{ b.address.state or '' }} {{ b.address.zip or '' }}</dd></div>
+        <div><dt>Address</dt><dd>{{ b.address.line1 or '–' }}<br>{{ b.address.city or '' }}{% if b.address.city %}, {% endif %}{{ b.address.state or '' }} {{ b.address.zip or '' }}
+          <div class="muted small" style="font-weight:400">{{ b.address.kind }}</div></dd></div>
         <div><dt>Entity type</dt><dd>{{ b.entity_type or '–' }}</dd></div>
+        {% if b.dba_names %}<div><dt>Also does business as</dt><dd>{{ b.dba_names|join(', ') }}</dd></div>{% endif %}
         <div><dt>Formed</dt><dd>{{ b.formation_date or 'Unknown' }}</dd></div>
         <div><dt>Industry source</dt><dd>{{ {'ppp': 'PPP loan', 'sba': 'SBA loan', 'rules': 'Name match', 'llm': 'AI guess', 'manual': 'Manual'}.get(b.industry_detail.source, '–') }}{% if b.industry_detail.confidence %} ({{ (b.industry_detail.confidence * 100)|round|int }}% confidence){% endif %}</dd></div>
       </dl>

@@ -1,0 +1,6 @@
+id,name,business_type,status,sub_status,accountnumber,date_registration,billingstreet,billing_unit,billingcity,billingcountry,billingpostalcode,billingstate,business_email_address,citizenship,formation_place,woman_owned_organization,veteran_owned_organization,naics_code,naics_sub_code,create_dt
+001A,"NUTMEG PEST CONTROL, LLC",LLC,Active,,0700001,1999-03-01T00:00:00.000,55 Farmington Ave,,Hartford,United States,06105,CT,owner@example.com,Domestic,,true,false,Exterminating and Pest Control Services (561710),,
+001B,"ELM CITY CLEANING SERVICES, INC.",Stock,Active,,0700002,1995-07-07T00:00:00.000,200 Orange St,,New Haven,United States,06510,CT,owner@example.com,Domestic,,true,false,,,
+001C,EXAMPLE ALUMNI ASSOCIATION,Non-Stock,Active,,0700003,1960-01-01T00:00:00.000,1 College St,,New Haven,United States,06510,CT,owner@example.com,Domestic,,true,false,,,
+001D,FORFEITED WIDGETS LLC,LLC,Forfeited,,0700004,2000-01-01T00:00:00.000,2 Gone Rd,,Hartford,United States,06105,CT,owner@example.com,Domestic,,true,false,,,
+001E,OUT OF STATE STOCK CO,Stock,Active,,0700005,1998-01-01T00:00:00.000,3 Far Away,,Hartford,United States,06105,CT,owner@example.com,Foreign,,true,false,,,

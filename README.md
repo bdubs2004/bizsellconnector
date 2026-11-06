@@ -1,10 +1,34 @@
 # Deal Feed (working name): backend
 
-Off-market small businesses in the Upper Midwest that are **not listed for sale but are likely to sell**,
-scored and served to humans (web app, REST API) and AI agents (MCP server).
+Off-market small businesses that are **not listed for sale but are likely to sell**, scored and served to
+humans (web app, REST API) and AI agents (MCP server).
 
-v1 scope: **Iowa only**, three industries (pest control, commercial cleaning, independent insurance agencies)
-plus three backups (auto repair, bookkeeping/tax, landscaping).
+Coverage: the six states whose business registries are free to download in bulk (see below), three core
+industries (pest control, commercial cleaning, independent insurance agencies) plus three backups (auto repair,
+bookkeeping/tax, landscaping).
+
+## States
+
+| State | Source | License | Rows we keep* | Notes |
+|---|---|---|---|---|
+| IA | [Iowa Data Hub, dataset 554](https://data.iowa.gov/catalog/dataset/554) | CC BY 4.0 | 149k | Moved off Socrata in 2026; new URL is a zip. Includes geocoded addresses. |
+| CO | [data.colorado.gov 4ykn-tg5h](https://data.colorado.gov/d/4ykn-tg5h) | Public Domain | 1.25M | All statuses since 1864; we pull live entities only. "Delinquent" kept and penalized. |
+| NY | [data.ny.gov n9v6-gdp6](https://data.ny.gov/d/n9v6-gdp6) | NY open data | 2.51M | Most entities have no business location on file, only a service-of-process address. |
+| CT | [data.ct.gov n7gp-d28j](https://data.ct.gov/d/n7gp-d28j) | Public Domain | 177k | Self-reported NAICS on about half the records. |
+| OR | [data.oregon.gov tckn-sxa6](https://data.oregon.gov/d/tckn-sxa6) | Oregon open data | ≤352k | One row per role; assumed business names become DBA names. |
+| TX | [data.texas.gov 9cir-efmm](https://data.texas.gov/d/9cir-efmm) | Texas open data | 1.30M | Comptroller franchise-tax list (has SOS charter date + NAICS). Address is the tax mailing address. |
+
+\*Counted on each state's server in Nov 2026 with the same filters (about 5.6M total): domestic for-profit entities (LLC, corporation, partnerships, professional entities)
+at least `DEALFEED_MIN_AGE_YEARS` (default 5) old. Nonprofits, churches, co-ops, banks, insurers, trusts and
+out-of-state ("foreign") registrations are skipped: they aren't acquisition targets, and a foreign
+registration date isn't the business's real age. Exact counts print after each load.
+
+Checked and **not** included yet:
+- **Paid:** MN, SD, NC ($2,000/yr), IN ($9,500), SC.
+- **Retired:** WA (bulk extract shut down in 2024).
+- **New filings only:** OH, which isn't useful for finding old businesses.
+- **Free but blocks automated downloads:** FL and AK. FL is also fixed-width. Both could be added from a
+  file you download by hand in a browser.
 
 ```
 raw CSVs ─► ingest ─► normalize ─► match/dedupe ─► classify ─► size ─► score ─► Postgres
@@ -27,7 +51,7 @@ cp .env.example .env && set -a && source .env && set +a
 dealfeed migrate
 dealfeed demo                              # loads tests/fixtures/*, builds, prints a demo API key
 dealfeed serve                             # web app at http://localhost:8000, API docs at /docs
-pytest -q                                  # 43 tests; DROPS the dealfeed_test schema each run
+pytest -q                                  # 64 tests; DROPS the dealfeed_test schema each run
 ```
 
 Try it:
@@ -46,7 +70,7 @@ HTMX and Leaflet are vendored in `src/dealfeed/web/static/vendor/`, so there's n
 | Page | What it does |
 |---|---|
 | `/` | Landing page + free sample (top 3 per v1 industry, score 50+, 10+ years). No login needed. |
-| `/search` | Filters (industry, counties, city, name, years, employees, min score), map, ranked table with reasons, CSV export. Filters update results in place. |
+| `/search` | Filters (state, industry, counties, city, name, years, employees, min score), map, ranked table with reasons, CSV export. Filters update results in place. |
 | `/business/{id}` | Score breakdown, size estimate, SBA loans, filings, sources; save to pipeline with status and notes. |
 | `/pipeline` | Saved targets by status; change status/notes inline; CSV export. |
 | `/deal-math` | SBA 7(a) calculator (DSCR, debt service, cash needed, verdict). |
@@ -66,12 +90,14 @@ The map uses OpenStreetMap tiles and only shows businesses with coordinates (`de
 Run this on your own machine and accounts (scope ground rule 1).
 
 ```bash
-# 1. Iowa SOS (free, CC BY 4.0). Check the column mapping first:
-dealfeed ingest ia-sos --download          # or: --file path/to/rows.csv
-#    If it fails with "Could not find required column(s)", the error lists the real headers.
-#    Add the spelling to SPEC in src/dealfeed/ingest/ia_sos.py. Same for `dealfeed inspect FILE --source ...`.
+# 1. State registries: download (filtered on the state's server) + load. One state or all six.
+dealfeed sources                           # what's loaded, from where, and when
+dealfeed refresh IA --max-rows 5000        # try one small slice first
+dealfeed refresh all                       # full pull: ~5.6M rows after filters; plan on 1-2 hours
+#    Already have a file? dealfeed ingest state --state CO --file ~/Downloads/co.csv
+#    Column problems: dealfeed inspect FILE --source co_sos  (lists real headers vs. what we expect)
 
-# 2. SBA PPP (download the CSVs from data.sba.gov/dataset/ppp-foia; filtered to IA on load)
+# 2. SBA PPP (download the CSVs from data.sba.gov/dataset/ppp-foia; filtered to covered states on load)
 dealfeed ingest ppp ~/Downloads/public_150k_plus_*.csv ~/Downloads/public_up_to_150k_*.csv
 
 # 3. SBA 7(a) and 504 (data.sba.gov/dataset/7a-504-foia)
@@ -148,9 +174,13 @@ privacy rules, and the web app (tests plus a real-browser run of every page at d
 All of it ran against the fictional fixtures and Postgres 16.
 
 **Not verified yet** (the build environment couldn't reach these hosts):
-- **Iowa SOS column headers.** The mapping accepts several spellings, but the real file may use another one.
-  The first `ingest ia-sos` will tell you.
+- **Full-size pulls.** Every state's column layout and filters were checked against live data, and each
+  loaded cleanly from a real 50k-row slice (Iowa in full). The full multi-million-row pulls haven't been run
+  end to end.
+- **Texas org-type codes** beyond CT/CL/PL (for example, professional corporations) aren't loaded until the
+  Comptroller's code list is confirmed.
 - **Census geocoder** request/response format (`geocode.py`). Run it with `--limit 50` and check the output.
+  County names are only mapped for Iowa so far; NY has counties from the registry.
 - Real-world match rates and score quality. That's the Phase 1 hand-check: 100 matches, 200
   classifications, 30 targets.
 
@@ -164,4 +194,6 @@ All of it ran against the fictional fixtures and Postgres 16.
 - Stripe subscriptions and metered billing (the `api_usage` table already records rows per call)
 - Website-enrichment signals (`score.py` already reads `stale_website` / `no_website` from `signals`)
 - Census CBP coverage metric
+- Connecticut Principals dataset (officer names; its residence-address columns must stay out)
+- Florida and Alaska from a manual download; Minnesota and South Dakota if their prices work
 - Map tiles: OpenStreetMap's public tiles are fine for light use; switch to a paid tile provider at scale

@@ -7,15 +7,19 @@ from datetime import date
 import psycopg
 from pydantic import BaseModel, Field
 
+from ..config import get_settings
 from ..industries import BY_NAICS, resolve_industry
 from ..normalize import normalize_name
+from ..states_meta import SUPPORTED_STATES, covered_states_text
+
+COUNT_CAP = 10_000
 
 DATA_CAVEAT = ("Scores are directional, rules-based estimates of likelihood to sell, not predictions. "
                "Size figures are ranges derived from 2020-21 PPP data. Verify before outreach.")
 
 
 class SearchParams(BaseModel):
-    state: str = Field("IA", description="Two-letter state. v1 covers Iowa only.")
+    state: str | None = Field(None, description="Two-letter state: IA, CO, NY, CT, OR or TX. Empty = all covered states.")
     industry: str | None = Field(None, description="Industry name or keyword, e.g. 'pest control', 'janitorial', "
                                                    "'insurance agency', or a NAICS code")
     naics_codes: list[str] | None = Field(None, description="NAICS codes or prefixes, e.g. ['561710'] or ['5617']")
@@ -81,29 +85,40 @@ def target_summary(row: dict, today: date) -> dict:
         "location": ({"lat": row["latitude"], "lon": row["longitude"]}
                      if row.get("latitude") is not None and row.get("longitude") is not None else None),
         "data_as_of": {
-            "iowa_sos": row["sos_pulled_at"].date().isoformat() if row.get("sos_pulled_at") else None,
+            "state_registry": row["sos_pulled_at"].date().isoformat() if row.get("sos_pulled_at") else None,
             "scored_at": row["scored_at"].date().isoformat() if row.get("scored_at") else None,
         },
     }
 
 
 BASE_SELECT = """
-SELECT b.*, s.score, s.reasons, s.breakdown, s.scored_at, s.model_version,
+SELECT b.*, s.reasons, s.breakdown, s.scored_at, s.model_version,
        se.employees_low, se.employees_high, se.payroll_low, se.payroll_high, se.revenue_low, se.revenue_high,
        se.method AS se_method, se.as_of AS se_as_of,
-       sos.pulled_at AS sos_pulled_at
+       sos.pulled_at AS sos_pulled_at, sos.source AS registry_source
   FROM businesses b
   LEFT JOIN scores s ON s.business_id = b.id
   LEFT JOIN LATERAL (SELECT * FROM size_estimates x WHERE x.business_id = b.id
                      ORDER BY x.as_of DESC NULLS LAST LIMIT 1) se ON true
-  LEFT JOIN source_records sos ON sos.id = b.id AND sos.source = 'ia_sos'
+  LEFT JOIN source_records sos ON sos.id = b.id
+"""
+
+SIZE_JOIN = """
+  LEFT JOIN LATERAL (SELECT * FROM size_estimates x WHERE x.business_id = b.id
+                     ORDER BY x.as_of DESC NULLS LAST LIMIT 1) se ON true
 """
 
 
 def _where(p: SearchParams) -> tuple[str, dict, dict]:
-    clauses = ["b.state = %(state)s"]
-    args: dict = {"state": p.state.upper()}
-    resolved: dict = {"state": p.state.upper()}
+    clauses: list[str] = []
+    args: dict = {}
+    resolved: dict = {}
+    if p.state:
+        clauses.append("b.state = %(state)s")
+        args["state"] = p.state.strip().upper()
+        resolved["state"] = args["state"]
+    else:
+        resolved["states"] = list(SUPPORTED_STATES)
 
     naics = list(p.naics_codes or [])
     if p.industry:
@@ -151,20 +166,26 @@ def _where(p: SearchParams) -> tuple[str, dict, dict]:
         sc = " AND ".join(size_clauses)
         clauses.append(f"(({sc}) OR se.method IS NULL)" if p.include_unknown_size else f"({sc})")
     if p.min_score is not None:
-        clauses.append("s.score >= %(min_score)s")
+        clauses.append("b.score >= %(min_score)s")
         args["min_score"] = p.min_score
     if not p.include_inactive:
         clauses.append("b.status <> 'inactive'")
-    return " AND ".join(clauses), args, resolved
+    return " AND ".join(clauses) or "true", args, resolved
 
 
-def search_rows(conn: psycopg.Connection, p: SearchParams, limit: int, offset: int = 0) -> tuple[list[dict], int, dict]:
+def search_rows(conn: psycopg.Connection, p: SearchParams, limit: int, offset: int = 0,
+                count: bool = True) -> tuple[list[dict], int, dict]:
+    """Ranked rows plus a match count capped at COUNT_CAP + 1 (counting millions exactly is slow
+    and nobody pages that far; callers show "10,000+")."""
     where, args, resolved = _where(p)
-    sql = (f"SELECT q.*, count(*) OVER () AS total_matching FROM ({BASE_SELECT} WHERE {where}) q "
-           "ORDER BY q.score DESC NULLS LAST, q.formation_date ASC NULLS LAST, q.legal_name "
+    sql = (f"{BASE_SELECT} WHERE {where} "
+           "ORDER BY b.score DESC NULLS LAST, b.formation_date ASC NULLS LAST, b.id "
            "LIMIT %(limit)s OFFSET %(offset)s")
     rows = conn.execute(sql, args | {"limit": limit, "offset": offset}).fetchall()
-    total = rows[0]["total_matching"] if rows else 0
+    total = 0
+    if count:
+        total = conn.execute(f"SELECT count(*) AS n FROM (SELECT 1 FROM businesses b {SIZE_JOIN} WHERE {where} "
+                             f"LIMIT {COUNT_CAP + 1}) x", args).fetchone()["n"]
     return rows, total, resolved
 
 
@@ -173,14 +194,15 @@ def search_targets(conn: psycopg.Connection, p: SearchParams, limit: int, today:
     rows, total, resolved = search_rows(conn, p, limit, p.offset)
     results = [target_summary(r, today) for r in rows]
     notes = [DATA_CAVEAT]
-    if p.state.upper() != "IA":
-        notes.append("v1 data covers Iowa only; other states return no results yet.")
+    if p.state and p.state.strip().upper() not in SUPPORTED_STATES:
+        notes.append(f"No data for {p.state.upper()} yet. Covered states: {covered_states_text()}.")
     if limit < p.limit:
         notes.append(f"Results capped at {limit} by your plan's per-call or monthly limit.")
     return {
         "results": results,
         "returned": len(results),
-        "total_matching": total,
+        "total_matching": min(total, COUNT_CAP),
+        "total_is_lower_bound": total > COUNT_CAP,
         "offset": p.offset,
         "next_offset": p.offset + len(results) if p.offset + len(results) < total else None,
         "filters_applied": resolved,
@@ -188,8 +210,9 @@ def search_targets(conn: psycopg.Connection, p: SearchParams, limit: int, today:
     }
 
 
-def market_summary(conn: psycopg.Connection, state: str = "IA", industry: str | None = None,
+def market_summary(conn: psycopg.Connection, state: str | None = None, industry: str | None = None,
                    naics_code: str | None = None) -> dict:
+    """Counts and distributions for an industry in one state, or across all covered states."""
     codes: list[str] = []
     label = None
     if industry:
@@ -202,11 +225,14 @@ def market_summary(conn: psycopg.Connection, state: str = "IA", industry: str | 
         label = label or (BY_NAICS[naics_code].label if naics_code in BY_NAICS else f"NAICS {naics_code}")
     if not codes:
         raise ValueError("Provide an industry or a naics_code")
-    args = {"state": state.upper(), "like": [c + "%" for c in codes]}
-    base = "FROM businesses b WHERE b.state = %(state)s AND b.naics_code LIKE ANY(%(like)s)"
+    st = state.strip().upper() if state else None
+    args = {"state": st, "like": [c + "%" for c in codes]}
+    in_state = "(%(state)s::text IS NULL OR b.state = %(state)s)"
+    base = f"FROM businesses b WHERE {in_state} AND b.naics_code LIKE ANY(%(like)s)"
     q = lambda sql: conn.execute(sql, args).fetchall()  # noqa: E731
 
     totals = q(f"SELECT count(*) AS total, count(*) FILTER (WHERE status = 'active') AS active, "
+               f"count(*) FILTER (WHERE status = 'delinquent') AS delinquent, "
                f"count(*) FILTER (WHERE status = 'inactive') AS inactive, "
                f"count(*) FILTER (WHERE status = 'unknown') AS status_unknown {base}")[0]
     age = q(f"""SELECT CASE WHEN formation_date IS NULL THEN 'unknown'
@@ -224,24 +250,25 @@ def market_summary(conn: psycopg.Connection, state: str = "IA", industry: str | 
                          ELSE '100+' END AS bucket, count(*) AS n
                   FROM businesses b LEFT JOIN LATERAL (SELECT * FROM size_estimates x WHERE x.business_id = b.id
                        ORDER BY as_of DESC NULLS LAST LIMIT 1) se ON true
-                 WHERE b.state = %(state)s AND b.naics_code LIKE ANY(%(like)s) AND b.status <> 'inactive'
+                 WHERE (%(state)s::text IS NULL OR b.state = %(state)s) AND b.naics_code LIKE ANY(%(like)s)
+                   AND b.status <> 'inactive'
                  GROUP BY 1""")
-    scores = q("""SELECT CASE WHEN s.score >= 80 THEN '80-100' WHEN s.score >= 60 THEN '60-79'
-                           WHEN s.score >= 40 THEN '40-59' ELSE '0-39' END AS bucket, count(*) AS n
-                    FROM businesses b JOIN scores s ON s.business_id = b.id
-                   WHERE b.state = %(state)s AND b.naics_code LIKE ANY(%(like)s) AND b.status <> 'inactive'
-                   GROUP BY 1""")
-    counties = q(f"SELECT coalesce(county, 'UNKNOWN') AS county, count(*) AS n {base} AND b.status <> 'inactive' "
-                 "GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10")
+    scores = q(f"""SELECT CASE WHEN b.score >= 80 THEN '80-100' WHEN b.score >= 60 THEN '60-79'
+                            WHEN b.score >= 40 THEN '40-59' ELSE '0-39' END AS bucket, count(*) AS n
+                     {base} AND b.status <> 'inactive' AND b.score IS NOT NULL GROUP BY 1""")
+    counties = q(f"SELECT b.state, coalesce(b.county, 'UNKNOWN') AS county, count(*) AS n {base} "
+                 "AND b.status <> 'inactive' GROUP BY 1, 2 ORDER BY 3 DESC, 1, 2 LIMIT 10")
+    by_state = q(f"SELECT b.state, count(*) AS n {base} AND b.status <> 'inactive' GROUP BY 1 ORDER BY 2 DESC")
     sba = q("""SELECT count(*) AS loans_5y,
                       percentile_cont(0.25) WITHIN GROUP (ORDER BY amount) AS p25,
                       percentile_cont(0.5) WITHIN GROUP (ORDER BY amount) AS median,
                       percentile_cont(0.75) WITHIN GROUP (ORDER BY amount) AS p75,
                       count(*) FILTER (WHERE business_age_desc ILIKE '%%change of ownership%%') AS change_of_ownership
-                 FROM sba_loans WHERE program IN ('7a', '504') AND state = %(state)s
+                 FROM sba_loans WHERE program IN ('7a', '504') AND (%(state)s::text IS NULL OR state = %(state)s)
                   AND naics_code LIKE ANY(%(like)s) AND approval_date >= current_date - interval '5 years'""")[0]
     lenders = q("""SELECT lender, count(*) AS loans FROM sba_loans
-                    WHERE program IN ('7a', '504') AND state = %(state)s AND naics_code LIKE ANY(%(like)s)
+                    WHERE program IN ('7a', '504') AND (%(state)s::text IS NULL OR state = %(state)s)
+                      AND naics_code LIKE ANY(%(like)s)
                       AND approval_date >= current_date - interval '5 years' AND lender IS NOT NULL
                     GROUP BY 1 ORDER BY 2 DESC LIMIT 5""")
 
@@ -250,7 +277,8 @@ def market_summary(conn: psycopg.Connection, state: str = "IA", industry: str | 
     return {
         "industry": label,
         "naics_codes": codes,
-        "state": state.upper(),
+        "state": st or "all covered states",
+        "by_state": {r["state"]: r["n"] for r in by_state},
         "businesses": dict(totals),
         "years_in_business": order(age, ["<5", "5-9", "10-19", "20-29", "30+", "unknown"]),
         "employees_estimate": order(size, ["1-4", "5-9", "10-19", "20-49", "50-99", "100+", "unknown"]),
@@ -264,6 +292,8 @@ def market_summary(conn: psycopg.Connection, state: str = "IA", industry: str | 
         "notes": [
             "Counts cover businesses we could classify into this industry; unclassified entities are not included.",
             "Coverage vs. Census County Business Patterns is not computed yet.",
+            f"Covered states: {covered_states_text()}. Domestic for-profit entities"
+            + (f" at least {get_settings().min_age_years} years old." if get_settings().min_age_years else "."),
             DATA_CAVEAT,
         ],
     }

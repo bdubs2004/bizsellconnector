@@ -26,7 +26,8 @@ from ..services.accounts import PlanError, User
 from ..services.business import NotFound
 from ..services.deal_math import DealInputs
 from ..services.ops import Ops
-from ..services.search import SearchParams, search_rows, target_summary
+from ..services.search import COUNT_CAP, SearchParams, search_rows, target_summary
+from ..states_meta import STATE_NAMES, covered_states_text
 from ..services.targets import STATUSES
 from . import auth
 
@@ -57,6 +58,9 @@ templates.env.filters["money"] = _money
 templates.env.filters["score_band"] = _score_band
 templates.env.globals["STATUSES"] = STATUSES
 templates.env.globals["INDUSTRIES"] = INDUSTRIES
+templates.env.globals["STATE_NAMES"] = STATE_NAMES
+templates.env.globals["COVERED_STATES"] = covered_states_text()
+templates.env.globals["COUNT_CAP"] = COUNT_CAP
 
 
 def render(request: Request, name: str, user: User | None, status_code: int = 200, **ctx) -> HTMLResponse:
@@ -149,11 +153,11 @@ def _int(v: str | None) -> int | None:
 
 def params_from_query(qp) -> tuple[SearchParams, int, dict]:
     page = max(1, _int(qp.get("page")) or 1)
-    form = {k: qp.get(k, "") for k in ("industry", "counties", "city", "name", "min_years", "min_employees",
+    form = {k: qp.get(k, "") for k in ("industry", "state", "counties", "city", "name", "min_years", "min_employees",
                                         "max_employees", "min_score", "sized_only")}
     counties = [c.strip() for c in form["counties"].split(",") if c.strip()] or None
     p = SearchParams(
-        industry=form["industry"] or None, counties=counties, city=form["city"] or None,
+        industry=form["industry"] or None, state=form["state"] or None, counties=counties, city=form["city"] or None,
         name_contains=form["name"] or None, min_years_in_business=_int(form["min_years"]),
         min_employees=_int(form["min_employees"]), max_employees=_int(form["max_employees"]),
         min_score=_int(form["min_score"]), include_unknown_size=not form["sized_only"],

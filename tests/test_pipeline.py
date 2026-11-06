@@ -7,7 +7,7 @@ import pytest
 
 from conftest import FIX, biz_id, load_fixtures, reset_db
 from dealfeed import match, pipeline
-from dealfeed.ingest import ia_sos
+from dealfeed.ingest import states
 
 
 @pytest.fixture(scope="module")
@@ -27,11 +27,19 @@ def fresh(built):
 
 def test_build_counts(fresh):
     _, r = fresh
-    assert r["spine"] == {"active": 12, "inactive": 0}
-    # 8 exact (incl. a 2nd-draw loan and the 7(a)), Sunrise "PEST MGMT" -> review,
-    # Cornbelt (no SOS record) -> new business, Iowa Pest Pros 7(a) -> unmatched
-    assert r["match"] == {"exact": 8, "review": 1, "new_from_ppp": 1, "unmatched": 1}
-    assert r["score"]["scored"] == 13
+    assert r["spine"]["by_state"] == {
+        "CO": {"active": 1, "delinquent": 1, "inactive": 0},
+        "CT": {"active": 2, "delinquent": 0, "inactive": 0},
+        "IA": {"active": 12, "delinquent": 0, "inactive": 0},
+        "NY": {"active": 2, "delinquent": 0, "inactive": 0},
+        "OR": {"active": 2, "delinquent": 0, "inactive": 0},
+        "TX": {"active": 1, "delinquent": 1, "inactive": 0},
+    }
+    # 10 exact (IA, CO and TX PPP loans, a 2nd draw and a 7(a)), Sunrise "PEST MGMT" at the same street address,
+    # Old Mill "EXTERMINATORS" (gray zone, pest control) -> review, Cornbelt (no registry record) -> new,
+    # Iowa Pest Pros 7(a) -> unmatched
+    assert r["match"] == {"exact": 10, "address": 1, "review": 1, "new_from_ppp": 1, "unmatched": 1}
+    assert r["score"]["scored"] == 23   # 22 registry businesses + Cornbelt
 
 
 def test_privacy_rules(fresh):
@@ -71,13 +79,13 @@ def test_size_estimate_uses_first_draw_and_ranges(fresh):
 def test_review_accept_links_record(fresh):
     conn, _ = fresh
     rev = conn.execute("SELECT r.id FROM match_review r JOIN businesses b ON b.id = r.candidate_business "
-                       "WHERE b.legal_name LIKE 'Sunrise%%' AND r.status = 'pending'").fetchone()
+                       "WHERE b.legal_name LIKE 'Old Mill%%' AND r.status = 'pending'").fetchone()
     assert rev
     match.resolve_review(conn, rev["id"], accept=True)
     pipeline.build(conn)
-    sunrise = biz_id(conn, "Sunrise%")
-    assert conn.execute("SELECT count(*) AS n FROM size_estimates WHERE business_id = %s", (sunrise,)).fetchone()["n"] == 1
-    assert conn.execute("SELECT naics_source FROM businesses WHERE id = %s", (sunrise,)).fetchone()["naics_source"] == "ppp"
+    old_mill = biz_id(conn, "Old Mill%")
+    assert conn.execute("SELECT count(*) AS n FROM size_estimates WHERE business_id = %s", (old_mill,)).fetchone()["n"] == 1
+    assert conn.execute("SELECT naics_source FROM businesses WHERE id = %s", (old_mill,)).fetchone()["naics_source"] == "ppp"
 
 
 def test_second_pull_marks_missing_inactive_and_keeps_ids(fresh, tmp_path):
@@ -89,8 +97,8 @@ def test_second_pull_marks_missing_inactive_and_keeps_ids(fresh, tmp_path):
     conn.commit()
 
     df = pl.read_csv(FIX / "ia_sos_sample.csv", infer_schema=False)
-    df.filter(~pl.col("Legal Name").str.starts_with("Old Mill")).write_csv(tmp_path / "pull2.csv")
-    ia_sos.load(conn, tmp_path / "pull2.csv", datetime(2026, 11, 1, tzinfo=timezone.utc))
+    df.filter(~pl.col("legal_name").str.starts_with("Old Mill")).write_csv(tmp_path / "pull2.csv")
+    states.load(conn, "ia_sos", tmp_path / "pull2.csv", datetime(2026, 11, 1, tzinfo=timezone.utc))
     pipeline.build(conn)
 
     assert biz_id(conn, "Hawkeye%") == hawkeye_before
@@ -98,7 +106,7 @@ def test_second_pull_marks_missing_inactive_and_keeps_ids(fresh, tmp_path):
     row = conn.execute("SELECT b.status, s.score, s.reasons FROM businesses b JOIN scores s ON s.business_id = b.id "
                        "WHERE legal_name LIKE 'Old Mill%%'").fetchone()
     assert row["status"] == "inactive"
-    assert any("latest Iowa SOS" in r for r in row["reasons"])
+    assert any("latest Iowa registry" in r for r in row["reasons"])
     # RA tenure widens across pulls
     ppl = conn.execute("SELECT first_seen, last_seen FROM business_people WHERE business_id = %s",
                        (hawkeye_before,)).fetchone()

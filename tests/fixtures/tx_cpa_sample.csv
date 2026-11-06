@@ -1,0 +1,6 @@
+taxpayer_number,taxpayer_name,taxpayer_address,taxpayer_city,taxpayer_state,taxpayer_zip,taxpayer_county_code,taxpayer_organizational_type,record_type_code,responsibility_beginning_date,secretary_of_state_sos_or_coa_file_number,sos_charter_date,sos_status_date,sos_status_code,right_to_transact_business_code,current_exempt_reason_code,exempt_begin_date,_621111
+32000000001,LONE STAR PEST CONTROL LLC,500 Congress Ave,Austin,TX,78701,227,CL,U,,0800000001,1998-02-03T00:00:00.000,,A,A,,,561710
+32000000002,ALAMO JANITORIAL SERVICES INC,100 Alamo Plz,San Antonio,TX,78205,15,CT,U,,0800000002,1985-11-11T00:00:00.000,,A,N,,,561720
+32000000003,TEXAS EXAMPLE CAMP,1 Camp Rd,Austin,TX,78701,227,CN,U,,0800000003,1950-01-01T00:00:00.000,,A,A,04,,721214
+32000000004,FOREIGN CORP OF DELAWARE,1 Tower,Austin,TX,78701,227,CF,U,,0800000004,1999-01-01T00:00:00.000,,A,A,,,
+32000000005,NO SOS RECORD LLC,2 Nowhere,Austin,TX,78701,227,CL,U,,,,,,A,,,

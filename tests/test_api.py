@@ -37,7 +37,7 @@ def test_search_ranked_with_reasons_and_dates(client, keys):
     assert names[0].startswith(("Hawkeye", "Prairie"))
     assert all(t["years_in_business"] >= 20 for t in body["results"])
     top = body["results"][0]
-    assert top["top_reasons"] and top["data_as_of"]["iowa_sos"]
+    assert top["top_reasons"] and top["data_as_of"]["state_registry"]
     assert top["size_estimate"]["source"] == "SBA PPP loan data"
     assert any("directional" in n for n in body["notes"])
 

@@ -19,6 +19,7 @@ import polars as pl
 import psycopg
 
 from .. import normalize as nz
+from ..states_meta import SUPPORTED_STATES
 from .common import ColumnSpec, finish_run, load_records, read_header, scan_csv, stable_id, start_run
 
 PPP_SPEC = ColumnSpec(
@@ -41,12 +42,15 @@ PPP_SPEC = ColumnSpec(
         "county": ("ProjectCountyName",),
         "processing_method": ("ProcessingMethod",),   # PPP = first draw, PPS = second draw
         "forgiveness_amount": ("ForgivenessAmount",),
+        "nonprofit": ("NonProfit",),
     },
     required=("loan_number", "name", "state", "amount"),
     drop_patterns=(r"^race$", r"^ethnicity$", r"^gender$", r"^veteran$"),
 )
 
 PPP_SKIP_BUSINESS_TYPES = {"sole proprietorship", "self-employed individuals", "independent contractors"}
+# Nonprofits got PPP too; they aren't acquisition targets.
+PPP_NONPROFIT_MARKERS = ("non-profit", "nonprofit", "501(c)")
 
 SBA_SPEC = ColumnSpec(
     fields={
@@ -126,21 +130,25 @@ def _insert_loans(conn: psycopg.Connection, source: str, program: str, ids: list
 
 def load_ppp(conn: psycopg.Connection, path: Path, states: list[str] | None = None,
              pulled_at: datetime | None = None) -> dict:
-    states = states or ["IA"]
+    states = states or list(SUPPORTED_STATES)
     header = read_header(path)
     cols = PPP_SPEC.resolve(header)
     dropped = set(PPP_SPEC.dropped(header))
     run_id = start_run(conn, "ppp", path)
     try:
         df = _filtered(path, cols["state"], states)
-        skipped = 0
+        skipped = skipped_np = 0
         records = []
         for row in df.iter_rows(named=True):
             def g(f, row=row):
                 c = cols.get(f)
                 return nz.clean_text(row.get(c)) if c else None
-            if (g("business_type") or "").strip().lower() in PPP_SKIP_BUSINESS_TYPES:
+            btype = (g("business_type") or "").strip().lower()
+            if btype in PPP_SKIP_BUSINESS_TYPES:
                 skipped += 1
+                continue
+            if (g("nonprofit") or "").upper() == "Y" or any(m in btype for m in PPP_NONPROFIT_MARKERS):
+                skipped_np += 1
                 continue
             canon = _common_canon(g)
             canon["program"] = "ppp"
@@ -150,8 +158,10 @@ def load_ppp(conn: psycopg.Connection, path: Path, states: list[str] | None = No
         loaded = load_records(conn, "ppp", run_id, records, pulled_at or datetime.now(timezone.utc))
         _insert_loans(conn, "ppp", "ppp", [r[0] for r in records])
         finish_run(conn, run_id, "ok", rows_read=df.height, rows_loaded=loaded,
-                   notes=f"skipped {skipped} individual-borrower loans; dropped {sorted(dropped)}")
-        return {"run_id": run_id, "rows_in_states": df.height, "rows_loaded": loaded, "skipped_individuals": skipped}
+                   notes=f"skipped {skipped} individual-borrower and {skipped_np} nonprofit loans; "
+                         f"dropped {sorted(dropped)}")
+        return {"run_id": run_id, "rows_in_states": df.height, "rows_loaded": loaded, "skipped_individuals": skipped,
+                "skipped_nonprofits": skipped_np}
     except Exception as e:
         conn.rollback()
         finish_run(conn, run_id, "failed", notes=repr(e)[:2000])
@@ -164,7 +174,7 @@ def load_sba(conn: psycopg.Connection, path: Path, program: str, states: list[st
     if program not in ("7a", "504"):
         raise ValueError("program must be '7a' or '504'")
     source = f"sba_{program}"
-    states = states or ["IA"]
+    states = states or list(SUPPORTED_STATES)
     header = read_header(path)
     cols = SBA_SPEC.resolve(header)
     run_id = start_run(conn, source, path)
