@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block content %}
+<div class="narrow card">
+  <h1>Sign in</h1>
+  {% if dev_auth %}
+  <p class="muted">Development sign-in: enter any email. New emails get an account on the
+    <strong>searcher</strong> plan. Proper login (Clerk or Supabase) comes later.</p>
+  {% endif %}
+  {% if error %}{% with kind="error", message=error %}{% include "partials/alert.html" %}{% endwith %}{% endif %}
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>Email
+      <input type="email" name="email" required autocomplete="email" autofocus value="{{ email or '' }}">
+    </label>
+    <button class="btn" type="submit">Continue</button>
+  </form>
+</div>
+{% endblock %}

@@ -26,10 +26,13 @@ src/dealfeed/
     targets.py               saved pipeline, CSV export
     deal_math.py             SBA 7(a) scenario math (pure)
     ops.py                   the single entry point both surfaces call
-  api/app.py                 FastAPI REST
+  api/app.py                 FastAPI app: REST under /v1, plus mounts the web app
+  web/routes.py              server-rendered pages (Jinja + HTMX partials)
+  web/auth.py                web sign-in seam (dev-only email login for now)
+  web/templates/, static/    HTML, CSS, vendored htmx 2.0.4 + Leaflet 1.9.4
   mcp_server.py              MCP server (stdio + Streamable HTTP with bearer auth)
   cli.py                     `dealfeed` command
-tests/                       32 tests on fictional fixtures
+tests/                       43 tests on fictional fixtures
 ```
 
 ## Key decisions
@@ -73,3 +76,10 @@ real benchmarks before customers see them.
 **One ops layer.** REST and MCP both go through `services/ops.py`, so plan gates, per-call caps,
 monthly row quotas and `api_usage` metering behave identically. MCP tools are async: they read the caller
 from the auth context and then run DB work in a worker thread.
+
+**Web app.** Every page is a plain HTML form that works without JavaScript. When HTMX is loaded, requests
+carry `HX-Request` and get back just a fragment (`templates/partials/`): search results, the save box,
+a pipeline row, a deal-math result. Pages call `Ops(conn, user, "web")`, so plan limits apply there too.
+Sessions are signed cookies (Starlette `SessionMiddleware`, SameSite=Lax, Secure in production). Login
+`next=` only accepts local paths, and map JSON escapes `<` so a business name can't break out of its
+`<script>` tag.

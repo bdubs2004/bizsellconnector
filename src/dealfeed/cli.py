@@ -113,8 +113,29 @@ def cmd_demo(a, conn):
     _print(sba.load_ppp(conn, FIXTURES / "ppp_sample.csv", ["IA"], pulled))
     _print(sba.load_sba(conn, FIXTURES / "sba_7a_sample.csv", "7a", ["IA"], pulled))
     _print(pipeline.build(conn))
+    _demo_coordinates(conn)
     u = accounts.get_user_by_email(conn, "demo@example.com") or accounts.create_user(conn, "demo@example.com", "fund")
     print(f"\nDemo user demo@example.com (fund plan). API key:\n{accounts.create_api_key(conn, u, 'demo')}")
+
+
+# Approximate city centers, used ONLY by `dealfeed demo` so the map has something to show.
+# Real data gets coordinates from `dealfeed geocode`.
+_DEMO_CITY_CENTERS = {
+    "DES MOINES": (41.59, -93.62), "AMES": (42.03, -93.62), "CEDAR RAPIDS": (41.98, -91.67),
+    "DAVENPORT": (41.52, -90.58), "ANKENY": (41.73, -93.60), "MASON CITY": (43.15, -93.20),
+    "IOWA CITY": (41.66, -91.53), "BETTENDORF": (41.55, -90.50), "DUBUQUE": (42.50, -90.66),
+    "WATERLOO": (42.49, -92.34), "FORT DODGE": (42.50, -94.17),
+}
+
+
+def _demo_coordinates(conn):
+    rows = conn.execute("SELECT id, city FROM businesses WHERE latitude IS NULL").fetchall()
+    for i, r in enumerate(rows):
+        c = _DEMO_CITY_CENTERS.get((r["city"] or "").upper())
+        if c:
+            conn.execute("UPDATE businesses SET latitude = %s, longitude = %s WHERE id = %s",
+                         (c[0] + (i % 5 - 2) * 0.01, c[1] + (i % 3 - 1) * 0.012, r["id"]))
+    conn.commit()
 
 
 def cmd_serve_api(a, conn):
@@ -184,7 +205,7 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("demo", help="load fictional sample data and build").set_defaults(fn=cmd_demo)
 
-    p = sub.add_parser("serve-api", help="run the REST API")
+    p = sub.add_parser("serve", aliases=["serve-api"], help="run the web app + REST API")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--reload", action="store_true")

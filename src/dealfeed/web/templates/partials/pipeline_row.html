@@ -1,0 +1,26 @@
+<tr id="row-{{ t.business_id }}" {% if flash %}class="just-saved"{% endif %}>
+  <td><span class="score score-{{ t.score|score_band }}">{{ t.score if t.score is not none else '–' }}</span></td>
+  <td>
+    <a class="strong" href="/business/{{ t.business_id }}">{{ t.name }}</a>
+    <div class="muted small">{{ t.industry or 'Unclassified' }}{% if t.years_in_business is not none %} · {{ t.years_in_business }} yrs{% endif %}</div>
+  </td>
+  <td>{{ t.city|title if t.city else '–' }}{% if t.county %}<div class="muted small">{{ t.county|title }} County</div>{% endif %}</td>
+  <td>
+    <form method="post" action="/pipeline/{{ t.business_id }}" class="row-form"
+          hx-post="/pipeline/{{ t.business_id }}" hx-target="closest tr" hx-swap="outerHTML" hx-trigger="change, submit">
+      <select name="status" aria-label="Status for {{ t.name }}">
+        {% for s in STATUSES %}<option value="{{ s }}" {% if t.pipeline_status == s %}selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
+      </select>
+      <input name="notes" value="{{ t.notes or '' }}" placeholder="Add a note" aria-label="Notes for {{ t.name }}">
+      <button class="btn btn-ghost btn-sm noscript-only" type="submit">Save</button>
+    </form>
+    <div class="muted small">Updated {{ t.updated_at[:10] }}{% if flash %} · <span class="flash-inline">Saved</span>{% endif %}</div>
+  </td>
+  <td>
+    <form method="post" action="/business/{{ t.business_id }}/remove"
+          hx-post="/business/{{ t.business_id }}/remove" hx-target="closest tr" hx-swap="outerHTML"
+          hx-confirm="Remove {{ t.name }} from your pipeline?">
+      <button class="linkish danger" type="submit" aria-label="Remove {{ t.name }}">Remove</button>
+    </form>
+  </td>
+</tr>

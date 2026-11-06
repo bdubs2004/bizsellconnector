@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Deal math{% endblock %}
+{% macro num(name, label, step='any', placeholder='', hint='') -%}
+<label>{{ label }}{% if hint %} <span class="hint">{{ hint }}</span>{% endif %}
+  <input type="number" name="{{ name }}" step="{{ step }}" min="0" inputmode="decimal"
+         value="{{ form.get(name, '') if form else defaults.get(name, '') }}"
+         placeholder="{{ placeholder }}" {% if name in ('purchase_price', 'cash_flow', 'interest_rate_pct') %}required{% endif %}>
+</label>
+{%- endmacro %}
+{% block content %}
+<div class="page-head">
+  <h1>SBA 7(a) deal math</h1>
+  {% if business_name %}<p class="muted">For {{ business_name }}</p>{% endif %}
+</div>
+<div class="deal-layout">
+  <form class="card stack" method="post" action="/deal-math"
+        hx-post="/deal-math" hx-target="#deal-result" hx-swap="innerHTML">
+    <fieldset>
+      <legend>The deal</legend>
+      <div class="row2">
+        {{ num('cash_flow', 'Annual cash flow', 'any', '350000') }}
+        <label>Cash flow type
+          <select name="cash_flow_type">
+            <option value="sde" {% if form.get('cash_flow_type') != 'ebitda' %}selected{% endif %}>SDE</option>
+            <option value="ebitda" {% if form.get('cash_flow_type') == 'ebitda' %}selected{% endif %}>EBITDA</option>
+          </select>
+        </label>
+      </div>
+      <div class="row2">
+        <label>Multiple <span class="hint">fills price</span>
+          <input type="number" id="multiple" step="0.1" min="0" placeholder="3.0">
+        </label>
+        {{ num('purchase_price', 'Purchase price', 'any', '1050000') }}
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>SBA loan</legend>
+      <div class="row2">
+        {{ num('interest_rate_pct', 'Interest rate %', '0.01', 'e.g. 10.5', 'your quote') }}
+        {{ num('term_years', 'Term (years)', '1') }}
+      </div>
+      <div class="row2">
+        {{ num('equity_injection_pct', 'Equity injection %', '0.5') }}
+        {{ num('closing_cost_pct', 'Closing costs %', '0.1') }}
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Seller note</legend>
+      <div class="row2">
+        {{ num('seller_note_pct', 'Seller note % of price', '0.5') }}
+        {{ num('seller_note_rate_pct', 'Rate %', '0.1') }}
+      </div>
+      <div class="row2">
+        {{ num('seller_note_term_years', 'Term (years)', '1') }}
+        <label class="check self-end"><input type="checkbox" name="seller_note_full_standby" {% if form.get('seller_note_full_standby') %}checked{% endif %}> Full standby (no payments)</label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Your assumptions</legend>
+      <div class="row2">
+        {{ num('buyer_salary', 'Your salary', 'any', '80000 for SDE', 'paid before debt') }}
+        {{ num('working_capital', 'Working capital', 'any') }}
+      </div>
+      {{ num('min_dscr', 'Lender DSCR threshold', '0.01') }}
+    </fieldset>
+    <button class="btn" type="submit">Run scenario</button>
+  </form>
+  <section id="deal-result" aria-live="polite">
+    {% if r or errors %}{% include "partials/deal_result.html" %}{% else %}
+    <div class="card empty"><p class="muted">Enter cash flow, price and your quoted interest rate to see debt service, DSCR and the cash you'd need to close.</p></div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  (function () {
+    var m = document.getElementById("multiple");
+    var cf = document.querySelector("[name=cash_flow]");
+    var price = document.querySelector("[name=purchase_price]");
+    function fill() { var x = parseFloat(m.value), c = parseFloat(cf.value); if (x > 0 && c > 0) price.value = Math.round(x * c); }
+    m.addEventListener("input", fill); cf.addEventListener("input", fill);
+  })();
+</script>
+{% endblock %}

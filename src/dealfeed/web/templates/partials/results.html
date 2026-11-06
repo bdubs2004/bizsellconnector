@@ -1,0 +1,53 @@
+{% set r = result %}
+<div class="results-head">
+  <p>
+    {% if r.total_matching %}
+    <strong>{{ (page - 1) * page_size + 1 }}–{{ (page - 1) * page_size + r.returned }}</strong> of {{ r.total_matching }} targets
+    {% if r.filters_applied.industry %}in {{ r.filters_applied.industry|lower }}{% endif %}
+    {% else %}
+    No targets match these filters.
+    {% endif %}
+  </p>
+  {% if r.total_matching and user.plan.export %}
+  <a class="btn btn-ghost btn-sm" href="/search/export.csv?{{ export_qs }}">Export CSV</a>
+  {% endif %}
+</div>
+
+{% if r.results %}
+<div class="table-wrap">
+<table class="targets">
+  <thead>
+    <tr><th>Score</th><th>Business</th><th>Location</th><th>Years</th><th>Est. size</th><th>Why</th></tr>
+  </thead>
+  <tbody>
+  {% for t in r.results %}
+    <tr>
+      <td><span class="score score-{{ t.score|score_band }}">{{ t.score if t.score is not none else '–' }}</span></td>
+      <td>
+        <a class="strong" href="/business/{{ t.business_id }}">{{ t.name }}</a>
+        <div class="muted small">{{ t.industry or 'Unclassified' }}{% if t.naics_source == 'rules' %} <span class="tag" title="Industry guessed from the business name">name match</span>{% endif %}</div>
+      </td>
+      <td>{{ t.city|title if t.city else '–' }}{% if t.county %}<div class="muted small">{{ t.county|title }} County</div>{% endif %}</td>
+      <td>{{ t.years_in_business if t.years_in_business is not none else '–' }}</td>
+      <td>
+        {% if t.size_estimate and t.size_estimate.employees %}{{ t.size_estimate.employees }} emp.
+        <div class="muted small">PPP {{ t.size_estimate.as_of[:4] if t.size_estimate.as_of else '' }}</div>
+        {% else %}<span class="muted">Unknown</span>{% endif %}
+      </td>
+      <td class="why">
+        <ul>{% for reason in t.top_reasons[:2] %}<li>{{ reason }}</li>{% endfor %}</ul>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<nav class="pager" aria-label="Pages">
+  {% if prev_qs %}<a class="btn btn-ghost btn-sm" href="/search?{{ prev_qs }}" hx-get="/search?{{ prev_qs }}" hx-target="#results" hx-push-url="true">← Previous</a>{% else %}<span></span>{% endif %}
+  {% if next_qs %}<a class="btn btn-ghost btn-sm" href="/search?{{ next_qs }}" hx-get="/search?{{ next_qs }}" hx-target="#results" hx-push-url="true">Next →</a>{% endif %}
+</nav>
+{% endif %}
+
+{% for n in r.notes %}<p class="note">{{ n }}</p>{% endfor %}
+<script type="application/json" id="map-points">{{ points|safe }}</script>

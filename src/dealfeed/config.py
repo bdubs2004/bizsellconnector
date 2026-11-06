@@ -32,6 +32,13 @@ class Settings:
     # Local single-user mode for the stdio MCP server (your own Claude Desktop).
     local_user_email: str | None = field(default_factory=lambda: _env("DEALFEED_LOCAL_USER"))
 
+    # Web app. Auth is a dev-only email sign-in until Clerk/Supabase is wired up;
+    # it refuses to run when DEALFEED_ENV=production.
+    env: str = field(default_factory=lambda: _env("DEALFEED_ENV", "development"))
+    web_auth: str = field(default_factory=lambda: _env("DEALFEED_WEB_AUTH", "dev"))
+    session_secret: str | None = field(default_factory=lambda: _env("DEALFEED_SESSION_SECRET"))
+    dev_signup_plan: str = field(default_factory=lambda: _env("DEALFEED_DEV_SIGNUP_PLAN", "searcher"))
+
     # Public URL of the MCP server (used for OAuth metadata when hosted)
     public_url: str = field(default_factory=lambda: _env("DEALFEED_PUBLIC_URL", "http://localhost:8001"))
 

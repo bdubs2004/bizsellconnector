@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Search{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">{% endblock %}
+{% block content %}
+<div class="search-layout">
+  <aside class="filters card">
+    <form id="filters" method="get" action="/search"
+          hx-get="/search" hx-target="#results" hx-push-url="true"
+          hx-trigger="submit, change from:select" hx-indicator="#results">
+      <details class="filter-details" open>
+      <summary class="h-sm">Filters</summary>
+      <div class="filter-body">
+      <label>Industry
+        <select name="industry">
+          <option value="">Any industry</option>
+          {% for ind in INDUSTRIES %}
+          <option value="{{ ind.slug }}" {% if form.industry == ind.slug %}selected{% endif %}>{{ ind.label }}{% if not ind.v1 %} (beta){% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Counties <span class="hint">comma-separated</span>
+        <input name="counties" value="{{ form.counties }}" placeholder="Polk, Story">
+      </label>
+      <label>City <input name="city" value="{{ form.city }}" placeholder="Des Moines"></label>
+      <label>Name contains <input name="name" value="{{ form.name }}"></label>
+      <label>Min. years in business
+        <select name="min_years">
+          {% for v in ['', '10', '15', '20', '25', '30'] %}
+          <option value="{{ v }}" {% if form.min_years == v %}selected{% endif %}>{{ v + '+' if v else 'Any' }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <fieldset class="range">
+        <legend class="label-like">Est. employees</legend>
+        <div class="row2 tight">
+          <input name="min_employees" type="number" min="0" placeholder="Min" aria-label="Minimum employees" value="{{ form.min_employees }}">
+          <input name="max_employees" type="number" min="0" placeholder="Max" aria-label="Maximum employees" value="{{ form.max_employees }}">
+        </div>
+      </fieldset>
+      <label class="check"><input type="checkbox" name="sized_only" {% if form.sized_only %}checked{% endif %}>
+        Only businesses with a size estimate</label>
+      <label>Min. score
+        <select name="min_score">
+          {% for v in ['', '40', '50', '60', '70', '80'] %}
+          <option value="{{ v }}" {% if form.min_score == v %}selected{% endif %}>{{ v + '+' if v else 'Any' }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="filter-actions">
+        <button class="btn" type="submit">Search</button>
+        <a class="linkish" href="/search">Reset</a>
+      </div>
+      </div>
+      </details>
+    </form>
+  </aside>
+
+  <section class="results-col">
+    <div id="map" class="map card" hidden></div>
+    <div id="results">
+      {% include "partials/results.html" %}
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script src="/static/search.js"></script>
+{% endblock %}

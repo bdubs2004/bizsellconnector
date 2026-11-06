@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Deal Feed{% endblock %} · Deal Feed</title>
+  <link rel="stylesheet" href="/static/app.css">
+  {% block head %}{% endblock %}
+  <script src="/static/vendor/htmx-2.0.4.min.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span>Deal Feed</a>
+      {% if user %}
+      <nav class="nav" aria-label="Main">
+        <a href="/search" {% if path.startswith('/search') or path.startswith('/business') %}aria-current="page"{% endif %}>Search</a>
+        <a href="/pipeline" {% if path.startswith('/pipeline') %}aria-current="page"{% endif %}>Pipeline</a>
+        <a href="/deal-math" {% if path.startswith('/deal-math') %}aria-current="page"{% endif %}>Deal math</a>
+        <a href="/connect" {% if path.startswith('/connect') %}aria-current="page"{% endif %}>Connect AI</a>
+      </nav>
+      <div class="who">
+        <a class="plan-chip" href="/connect" title="Plan and usage">{{ user.plan.name }}</a>
+        <span class="email">{{ user.email }}</span>
+        <form method="post" action="/logout"><button class="linkish">Sign out</button></form>
+      </div>
+      {% else %}
+      <nav class="nav"><a class="btn btn-sm" href="/login">Sign in</a></nav>
+      {% endif %}
+    </div>
+  </header>
+  {% if dev_auth %}
+  <div class="devbar">Development mode: sign-in has no password. Don't put this online until real auth is set up.</div>
+  {% endif %}
+  <main class="wrap main">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="wrap foot">
+    Data: Iowa Secretary of State, Active Iowa Business Entities (CC BY 4.0) · SBA PPP, 7(a) and 504 FOIA data.
+    Scores are directional estimates, not predictions. Verify before outreach.
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

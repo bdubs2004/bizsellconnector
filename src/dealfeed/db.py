@@ -27,6 +27,15 @@ def transaction(url: str | None = None) -> Iterator[psycopg.Connection]:
         conn.close()
 
 
+def request_conn() -> Iterator[psycopg.Connection]:
+    """FastAPI dependency: one connection per request. Swap for psycopg_pool when hosted."""
+    conn = connect()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def migrate(conn: psycopg.Connection) -> list[str]:
     """Apply every migrations/*.sql file not yet applied. Returns names applied."""
     conn.execute(

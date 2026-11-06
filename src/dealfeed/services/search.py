@@ -78,6 +78,8 @@ def target_summary(row: dict, today: date) -> dict:
         "score": row.get("score"),
         "top_reasons": [b["reason"] for b in breakdown if b["points"] != 0][:4],
         "size_estimate": size_summary(row),
+        "location": ({"lat": row["latitude"], "lon": row["longitude"]}
+                     if row.get("latitude") is not None and row.get("longitude") is not None else None),
         "data_as_of": {
             "iowa_sos": row["sos_pulled_at"].date().isoformat() if row.get("sos_pulled_at") else None,
             "scored_at": row["scored_at"].date().isoformat() if row.get("scored_at") else None,

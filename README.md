@@ -1,7 +1,7 @@
 # Deal Feed (working name): backend
 
 Off-market small businesses in the Upper Midwest that are **not listed for sale but are likely to sell**,
-scored and served to humans (REST API, and later a web app) and AI agents (MCP server).
+scored and served to humans (web app, REST API) and AI agents (MCP server).
 
 v1 scope: **Iowa only**, three industries (pest control, commercial cleaning, independent insurance agencies)
 plus three backups (auto repair, bookkeeping/tax, landscaping).
@@ -9,9 +9,9 @@ plus three backups (auto repair, bookkeeping/tax, landscaping).
 ```
 raw CSVs ─► ingest ─► normalize ─► match/dedupe ─► classify ─► size ─► score ─► Postgres
                                                                                   │
-                                                       services/ops.py (plans, metering)
-                                                         │                    │
-                                                    REST API (FastAPI)   MCP server
+                                              services/ops.py (plans, metering)
+                                               │                  │                 │
+                                     web app (HTMX)        REST API (FastAPI)   MCP server
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how each stage works and why.
@@ -26,8 +26,8 @@ cp .env.example .env && set -a && source .env && set +a
 
 dealfeed migrate
 dealfeed demo                              # loads tests/fixtures/*, builds, prints a demo API key
-dealfeed serve-api                         # http://localhost:8000/docs
-pytest -q                                  # 32 tests; DROPS the dealfeed_test schema each run
+dealfeed serve                             # web app at http://localhost:8000, API docs at /docs
+pytest -q                                  # 43 tests; DROPS the dealfeed_test schema each run
 ```
 
 Try it:
@@ -37,6 +37,29 @@ curl -s -X POST localhost:8000/v1/targets/search \
   -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
   -d '{"industry": "pest control", "min_years_in_business": 20}'
 ```
+
+## Web app
+
+Server-rendered with FastAPI + Jinja + HTMX: no JavaScript build step, same process as the API.
+HTMX and Leaflet are vendored in `src/dealfeed/web/static/vendor/`, so there's no CDN dependency.
+
+| Page | What it does |
+|---|---|
+| `/` | Landing page + free sample (top 3 per v1 industry, score 50+, 10+ years). No login needed. |
+| `/search` | Filters (industry, counties, city, name, years, employees, min score), map, ranked table with reasons, CSV export. Filters update results in place. |
+| `/business/{id}` | Score breakdown, size estimate, SBA loans, filings, sources; save to pipeline with status and notes. |
+| `/pipeline` | Saved targets by status; change status/notes inline; CSV export. |
+| `/deal-math` | SBA 7(a) calculator (DSCR, debt service, cash needed, verdict). |
+| `/connect` | Plan and usage, create/revoke API keys, copy-paste setup for Claude Code, Claude Desktop and the REST API. |
+
+**Auth is dev-only for now.** Signing in takes just an email (no password), and new accounts get
+`DEALFEED_DEV_SIGNUP_PLAN` (default: searcher). There's a plan switcher on `/connect` so you can try every
+plan. Both refuse to work when `DEALFEED_ENV=production`. Everything auth-related lives in
+`src/dealfeed/web/auth.py`, so adding Clerk or Supabase later means replacing that file and the `/login`
+routes. **Don't put the web app on the public internet until that's done.**
+
+The map uses OpenStreetMap tiles and only shows businesses with coordinates (`dealfeed geocode`).
+`dealfeed demo` puts the fictional businesses at approximate city centers so the map has something to show.
 
 ## Phase 1 runbook (real data)
 
@@ -121,7 +144,8 @@ claude.ai and ChatGPT connectors need a real OAuth login flow; that's Phase 3 (s
 ## What's verified and what isn't
 
 Verified here: the full pipeline, REST API, MCP (in-process and live over HTTP with bearer auth), plan limits,
-privacy rules. All of it ran against the fictional fixtures and Postgres 16.
+privacy rules, and the web app (tests plus a real-browser run of every page at desktop and phone widths).
+All of it ran against the fictional fixtures and Postgres 16.
 
 **Not verified yet** (the build environment couldn't reach these hosts):
 - **Iowa SOS column headers.** The mapping accepts several spellings, but the real file may use another one.
@@ -132,10 +156,12 @@ privacy rules. All of it ran against the fictional fixtures and Postgres 16.
 
 ## Phase 3 TODO (not built yet)
 
-- OAuth for hosted MCP: swap `ApiKeyVerifier` in `mcp_server.py` for a JWT verifier backed by Clerk or Supabase Auth
+- Real auth (Clerk or Supabase): replace `web/auth.py` for the web app, and swap `ApiKeyVerifier` in
+  `mcp_server.py` for a JWT verifier so claude.ai/ChatGPT connectors can log in
+- Set `DEALFEED_SESSION_SECRET` and `DEALFEED_ENV=production` when hosting (secure cookies, dev login off)
 - Connection pooling (`psycopg_pool`), Sentry, scheduled refresh (GitHub Actions or Railway cron)
 - Raw-file storage on R2/S3 instead of a local folder
 - Stripe subscriptions and metered billing (the `api_usage` table already records rows per call)
 - Website-enrichment signals (`score.py` already reads `stale_website` / `no_website` from `signals`)
 - Census CBP coverage metric
-- Web app (next step)
+- Map tiles: OpenStreetMap's public tiles are fine for light use; switch to a paid tile provider at scale

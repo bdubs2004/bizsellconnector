@@ -17,6 +17,9 @@ dependencies = [
     "rapidfuzz>=3.9",
     "usaddress>=0.5",
     "httpx>=0.27",
+    "jinja2>=3.1",
+    "itsdangerous>=2.1",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +31,10 @@ dealfeed = "dealfeed.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+dealfeed = ["web/templates/*.html", "web/templates/partials/*.html", "web/static/*", "web/static/vendor/*",
+            "web/static/vendor/leaflet/*", "web/static/vendor/leaflet/images/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

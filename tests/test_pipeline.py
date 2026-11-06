@@ -11,11 +11,18 @@ from dealfeed.ingest import ia_sos
 
 
 @pytest.fixture(scope="module")
-def fresh():
+def fresh(built):
+    built[0].rollback()            # release any locks the shared session connection holds
     conn = reset_db()
     result = load_fixtures(conn)
     yield conn, result
     conn.close()
+    # These tests mutate data (second pull, review decisions). Put the shared DB back
+    # to the plain fixture state so later modules see what they expect.
+    built[0].rollback()
+    clean = reset_db()
+    load_fixtures(clean)
+    clean.close()
 
 
 def test_build_counts(fresh):

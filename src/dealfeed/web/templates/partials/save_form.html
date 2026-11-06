@@ -1,0 +1,22 @@
+<section class="card" id="save-box">
+  <h2 class="h-sm">Your pipeline</h2>
+  {% if flash %}<p class="flash" role="status">{{ flash }}</p>{% endif %}
+  <form method="post" action="/business/{{ business_id }}/save" class="stack"
+        hx-post="/business/{{ business_id }}/save" hx-target="#save-box" hx-swap="outerHTML">
+    <label>Status
+      <select name="status">
+        {% for s in STATUSES %}<option value="{{ s }}" {% if saved and saved.status == s %}selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Notes
+      <textarea name="notes" rows="4" placeholder="Who to call, what you learned">{{ saved.notes if saved and saved.notes else '' }}</textarea>
+    </label>
+    <button class="btn" type="submit">{{ 'Update' if saved else 'Save to pipeline' }}</button>
+  </form>
+  {% if saved %}
+  <form method="post" action="/business/{{ business_id }}/remove"
+        hx-post="/business/{{ business_id }}/remove" hx-target="#save-box" hx-swap="outerHTML">
+    <button class="linkish danger" type="submit">Remove from pipeline</button>
+  </form>
+  {% endif %}
+</section>

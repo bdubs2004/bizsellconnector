@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Off-market Iowa targets{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">For search funds and self-funded searchers</p>
+  <h1>Iowa businesses that aren't for sale yet but probably will be.</h1>
+  <p class="lede">Every active Iowa business entity, matched to SBA loan records, sized from public PPP data,
+    and scored on how likely it is to sell in the next few years. Every score shows its reasons.
+    Search it here or ask Claude to do it for you.</p>
+  <div class="hero-cta">
+    {% if user %}
+    <a class="btn" href="/search">Search targets</a>
+    <a class="btn btn-ghost" href="/connect">Connect your AI</a>
+    {% else %}
+    <a class="btn" href="/login">Get started</a>
+    <a class="btn btn-ghost" href="#sample">See a free sample</a>
+    {% endif %}
+  </div>
+</section>
+
+<section id="sample">
+  <h2 class="section-title">Free sample: top-scored targets, 10+ years in business</h2>
+  <div class="sample-grid">
+    {% for s in samples %}
+    <article class="card sample">
+      <header class="sample-head">
+        <h3>{{ s.industry.label }}</h3>
+        <span class="muted">{{ s.total }} match{{ '' if s.total == 1 else 'es' }}</span>
+      </header>
+      {% if s.targets %}
+      <ol class="sample-list">
+        {% for t in s.targets %}
+        <li>
+          <span class="score score-{{ t.score|score_band }}">{{ t.score }}</span>
+          <div>
+            <a class="strong" href="/business/{{ t.business_id }}">{{ t.name }}</a>
+            <div class="muted small">{{ t.city|title if t.city else '' }}{% if t.years_in_business %} · {{ t.years_in_business }} yrs{% endif %}{% if t.size_estimate and t.size_estimate.employees %} · ~{{ t.size_estimate.employees }} employees{% endif %}</div>
+            {% if t.top_reasons %}<div class="small reason">{{ t.top_reasons[0] }}</div>{% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="muted">No strong matches in the current data yet.</p>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="how">
+  <h2 class="section-title">How the score works</h2>
+  <div class="how-grid">
+    <div><h3>Age</h3><p>Businesses filed 20 to 30+ years ago are more likely to have owners heading toward retirement.</p></div>
+    <div><h3>Owner-run signals</h3><p>An individual registered agent, rather than a filing service, suggests the founder still runs it.</p></div>
+    <div><h3>Fit for SBA buyers</h3><p>PPP-based size estimates show whether the business is big enough to carry SBA debt.</p></div>
+    <div><h3>Already sold?</h3><p>A recent SBA 7(a) loan marked "Change of Ownership" means someone just bought it, so it ranks lower.</p></div>
+  </div>
+</section>
+{% endblock %}

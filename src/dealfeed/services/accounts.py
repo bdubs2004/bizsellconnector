@@ -91,6 +91,28 @@ def user_for_api_key(conn: psycopg.Connection, key: str) -> User:
     return User(row["id"], row["email"], PLANS[row["plan"]])
 
 
+def list_api_keys(conn: psycopg.Connection, user: User) -> list[dict]:
+    return conn.execute(
+        "SELECT id, key_prefix, label, created_at, revoked_at FROM api_keys WHERE user_id = %s "
+        "ORDER BY revoked_at IS NOT NULL, created_at DESC", (user.id,)
+    ).fetchall()
+
+
+def revoke_user_key(conn: psycopg.Connection, user: User, key_id: str) -> bool:
+    n = conn.execute("UPDATE api_keys SET revoked_at = now() WHERE id = %s AND user_id = %s AND revoked_at IS NULL",
+                     (key_id, user.id)).rowcount
+    conn.commit()
+    return n > 0
+
+
+def set_plan(conn: psycopg.Connection, user: User, plan: str) -> User:
+    if plan not in PLANS:
+        raise ValueError(f"unknown plan {plan!r}")
+    conn.execute("UPDATE users SET plan = %s WHERE id = %s", (plan, user.id))
+    conn.commit()
+    return User(user.id, user.email, PLANS[plan])
+
+
 def revoke_api_key(conn: psycopg.Connection, key_prefix: str) -> int:
     n = conn.execute("UPDATE api_keys SET revoked_at = now() WHERE key_prefix = %s AND revoked_at IS NULL",
                      (key_prefix,)).rowcount

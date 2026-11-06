@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Pipeline{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Your pipeline</h1>
+  {% if data.targets and user.plan.export %}
+  <a class="btn btn-ghost btn-sm" href="/pipeline/export.csv{% if status %}?status={{ status }}{% endif %}">Export CSV</a>
+  {% endif %}
+</div>
+
+{% set total = data.counts_by_status.values()|sum %}
+<nav class="tabs" aria-label="Filter by status">
+  <a href="/pipeline" {% if not status %}aria-current="page"{% endif %}>All <span class="count">{{ total }}</span></a>
+  {% for s in STATUSES %}
+  <a href="/pipeline?status={{ s }}" {% if status == s %}aria-current="page"{% endif %}>{{ s|capitalize }} <span class="count">{{ data.counts_by_status.get(s, 0) }}</span></a>
+  {% endfor %}
+</nav>
+
+{% if data.targets %}
+<div class="table-wrap">
+<table class="targets pipeline">
+  <thead><tr><th>Score</th><th>Business</th><th>Location</th><th>Status and notes</th><th></th></tr></thead>
+  <tbody>
+    {% for t in data.targets %}{% include "partials/pipeline_row.html" %}{% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="card empty">
+  <p>{% if status %}Nothing marked "{{ status }}" yet.{% else %}No saved targets yet.{% endif %}</p>
+  <a class="btn" href="/search">Find targets</a>
+</div>
+{% endif %}
+{% endblock %}

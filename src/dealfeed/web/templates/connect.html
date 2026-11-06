@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Connect your AI{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Connect your AI</h1></div>
+
+<div class="connect-layout">
+  <div class="stack-lg">
+    {% if new_key %}
+    <section class="card key-reveal" role="status">
+      <h2 class="h-sm">Your new API key</h2>
+      <p>Copy it now. For security it's only shown once.</p>
+      <div class="copy-row"><code id="new-key">{{ new_key }}</code>
+        <button class="btn btn-sm" type="button" data-copy="new-key">Copy</button></div>
+    </section>
+    {% endif %}
+
+    {% if not user.plan.mcp %}
+    {% with kind="warn", message="Your " ~ user.plan.name ~ " plan doesn't include AI-assistant (MCP) access. API keys still work for the REST API." %}{% include "partials/alert.html" %}{% endwith %}
+    {% endif %}
+
+    <section class="card">
+      <h2 class="h-sm">Claude Code</h2>
+      <p class="muted small">Adds Deal Feed as a remote MCP server. Replace the key with one of yours.</p>
+      <pre class="code" id="cc">claude mcp add --transport http dealfeed {{ mcp_url }} \
+  --header "Authorization: Bearer {{ new_key or 'dfk_your_key_here' }}"</pre>
+      <button class="btn btn-ghost btn-sm" type="button" data-copy="cc">Copy</button>
+    </section>
+
+    <section class="card">
+      <h2 class="h-sm">Claude Desktop (runs on your computer)</h2>
+      <p class="muted small">Add to <code>claude_desktop_config.json</code>. This runs the server locally against your own database,
+        so it's for your own use, not for customers.</p>
+      <pre class="code" id="cd">{
+  "mcpServers": {
+    "dealfeed": {
+      "command": "/path/to/.venv/bin/dealfeed",
+      "args": ["serve-mcp", "--transport", "stdio"],
+      "env": {
+        "DATABASE_URL": "{{ db_url_hint }}",
+        "DEALFEED_LOCAL_USER": "{{ user.email }}"
+      }
+    }
+  }
+}</pre>
+      <button class="btn btn-ghost btn-sm" type="button" data-copy="cd">Copy</button>
+    </section>
+
+    <section class="card">
+      <h2 class="h-sm">claude.ai and ChatGPT connectors</h2>
+      <p class="muted">These need a sign-in flow (OAuth) that isn't built yet. It's coming with the real login system.</p>
+    </section>
+
+    <section class="card">
+      <h2 class="h-sm">REST API</h2>
+      <pre class="code" id="rest">curl -X POST {{ request.base_url }}v1/targets/search \
+  -H "Authorization: Bearer {{ new_key or 'dfk_your_key_here' }}" \
+  -H "Content-Type: application/json" \
+  -d '{"industry": "pest control", "min_years_in_business": 20}'</pre>
+      <button class="btn btn-ghost btn-sm" type="button" data-copy="rest">Copy</button>
+      <p class="small"><a href="/docs">Full API reference</a></p>
+    </section>
+
+    <section class="card">
+      <h2 class="h-sm">Try asking</h2>
+      <ul class="plain">
+        <li>"Find pest control companies in Iowa that have been around 20+ years and rank them."</li>
+        <li>"Give me a market summary for janitorial companies in Iowa."</li>
+        <li>"Run SBA math on the top one at 3x SDE, assuming $350k SDE and a 10.5% rate."</li>
+        <li>"Save the top three to my pipeline as researching."</li>
+      </ul>
+    </section>
+  </div>
+
+  <aside class="stack-lg">
+    <section class="card">
+      <h2 class="h-sm">Plan and usage</h2>
+      <p><span class="plan-chip">{{ usage.plan }}</span></p>
+      {% if usage.rows_per_month %}
+      {% set pct = [100, (usage.rows_used_this_month / usage.rows_per_month * 100)|round|int]|min %}
+      <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="{{ usage.rows_per_month }}" aria-valuenow="{{ usage.rows_used_this_month }}" aria-label="Rows used this month">
+        <span style="width: {{ pct }}%"></span>
+      </div>
+      <p class="small">{{ usage.rows_used_this_month }} of {{ usage.rows_per_month }} rows used this month</p>
+      {% endif %}
+      <ul class="plain small">
+        <li>Up to {{ usage.max_rows_per_call }} results per search</li>
+        <li>AI assistant (MCP): {{ 'included' if usage.mcp_enabled else 'not included' }}</li>
+        <li>CSV exports: {{ 'included' if usage.exports_enabled else 'not included' }}</li>
+      </ul>
+      {% if dev_auth %}
+      <form method="post" action="/connect/plan" class="stack dev-only">
+        <label>Switch plan <span class="hint">dev only, until billing exists</span>
+          <select name="plan" onchange="this.form.submit()">
+            {% for name in plans %}<option value="{{ name }}" {% if name == usage.plan %}selected{% endif %}>{{ name }}</option>{% endfor %}
+          </select>
+        </label>
+        <noscript><button class="btn btn-sm">Switch</button></noscript>
+      </form>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2 class="h-sm">API keys</h2>
+      <form method="post" action="/connect/keys" class="inline-form">
+        <input name="label" placeholder="Label, e.g. Claude Code" maxlength="60" aria-label="Key label">
+        <button class="btn btn-sm" type="submit">Create key</button>
+      </form>
+      {% if keys %}
+      <ul class="keys">
+        {% for k in keys %}
+        <li class="{{ 'revoked' if k.revoked_at }}">
+          <code>{{ k.key_prefix }}…</code>
+          <span class="muted small">{{ k.label or 'No label' }} · {{ k.created_at.date() }}{% if k.revoked_at %} · revoked{% endif %}</span>
+          {% if not k.revoked_at %}
+          <form method="post" action="/connect/keys/{{ k.id }}/revoke"><button class="linkish danger" type="submit">Revoke</button></form>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted small">No keys yet.</p>
+      {% endif %}
+    </section>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-copy]");
+    if (!b) return;
+    var el = document.getElementById(b.dataset.copy);
+    if (!el || !navigator.clipboard) return;
+    navigator.clipboard.writeText(el.textContent.trim()).then(function () {
+      var t = b.textContent; b.textContent = "Copied"; setTimeout(function () { b.textContent = t; }, 1500);
+    });
+  });
+</script>
+{% endblock %}

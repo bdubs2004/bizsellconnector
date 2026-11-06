@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}{{ b.name }}{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="/search">← Search</a></p>
+
+<header class="biz-head">
+  <span class="score score-lg score-{{ b.score|score_band }}" title="Likely-to-sell score">{{ b.score if b.score is not none else '–' }}</span>
+  <div>
+    <h1>{{ b.name }}</h1>
+    <p class="muted">
+      {{ b.industry or 'Industry unclassified' }}{% if b.naics_code %} · NAICS {{ b.naics_code }}{% endif %}
+      {% if b.address.city %} · {{ b.address.city|title }}{% if b.address.county %}, {{ b.address.county|title }} County{% endif %}{% endif %}
+      {% if b.years_in_business is not none %} · {{ b.years_in_business }} years in business{% endif %}
+      · <span class="status status-{{ b.status }}">{{ b.status }}</span>
+    </p>
+  </div>
+</header>
+
+<div class="biz-layout">
+  <div class="stack-lg">
+    <section class="card">
+      <h2 class="h-sm">Why it scored {{ b.score }}</h2>
+      <ul class="breakdown">
+        {% for s in b.score_breakdown or [] %}
+        <li class="{{ 'plus' if s.points > 0 else 'minus' if s.points < 0 else 'zero' }}">
+          <span class="pts">{% if s.points > 0 %}+{% endif %}{{ s.points if s.points != 0 else '·' }}</span>
+          <span>{{ s.reason }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="note">Every business starts at 30 points. The score is a directional, rules-based estimate.</p>
+    </section>
+
+    <section class="card">
+      <h2 class="h-sm">Size estimate</h2>
+      {% if b.size_estimates %}
+      {% set se = b.size_estimates[0] %}
+      <dl class="facts">
+        {% if se.employees %}<div><dt>Employees</dt><dd>{{ se.employees }}</dd></div>{% endif %}
+        {% if se.annual_payroll %}<div><dt>Annual payroll</dt><dd>{{ se.annual_payroll }}</dd></div>{% endif %}
+        {% if se.revenue_rough %}<div><dt>Revenue (rough)</dt><dd>{{ se.revenue_rough }}</dd></div>{% endif %}
+      </dl>
+      <p class="note">From {{ se.source }}, loan approved {{ se.as_of }}. Ranges, not exact figures: PPP excluded pay over
+        $100k per person, and the data is from 2020–21. Revenue uses a rough industry payroll ratio.</p>
+      {% else %}
+      <p class="muted">No PPP loan on record, so no size estimate.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2 class="h-sm">SBA loan history</h2>
+      {% if b.sba_loans %}
+      <div class="table-wrap"><table class="compact">
+        <thead><tr><th>Program</th><th>Approved</th><th>Amount</th><th>Lender</th><th>Jobs</th><th>Business age at loan</th></tr></thead>
+        <tbody>{% for l in b.sba_loans %}
+          <tr><td>{{ {'ppp': 'PPP', '7a': '7(a)', '504': '504'}[l.program] }}</td><td>{{ l.approval_date or '–' }}</td>
+              <td>{{ l.amount|money }}</td><td>{{ l.lender or '–' }}</td><td>{{ l.jobs_reported if l.jobs_reported is not none else '–' }}</td>
+              <td>{{ l.business_age_at_loan or '–' }}</td></tr>
+        {% endfor %}</tbody>
+      </table></div>
+      {% else %}<p class="muted">No SBA loans on record.</p>{% endif %}
+    </section>
+
+    <section class="card">
+      <h2 class="h-sm">Business details</h2>
+      <dl class="facts">
+        <div><dt>Address</dt><dd>{{ b.address.line1 or '–' }}<br>{{ b.address.city or '' }}{% if b.address.city %}, {% endif %}{{ b.address.state or '' }} {{ b.address.zip or '' }}</dd></div>
+        <div><dt>Entity type</dt><dd>{{ b.entity_type or '–' }}</dd></div>
+        <div><dt>Formed</dt><dd>{{ b.formation_date or 'Unknown' }}</dd></div>
+        <div><dt>Industry source</dt><dd>{{ {'ppp': 'PPP loan', 'sba': 'SBA loan', 'rules': 'Name match', 'llm': 'AI guess', 'manual': 'Manual'}.get(b.industry_detail.source, '–') }}{% if b.industry_detail.confidence %} ({{ (b.industry_detail.confidence * 100)|round|int }}% confidence){% endif %}</dd></div>
+      </dl>
+      {% if b.people_from_public_filings %}
+      <h3 class="h-xs">Named in public filings</h3>
+      <ul class="plain">{% for p in b.people_from_public_filings %}
+        <li>{{ p.name|title }} <span class="muted">· {{ p.role }} · seen {{ p.first_seen }}{% if p.last_seen != p.first_seen %} to {{ p.last_seen }}{% endif %}</span></li>
+      {% endfor %}</ul>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2 class="h-sm">Sources</h2>
+      <ul class="plain small">{% for s in b.sources %}
+        <li>{{ s.source }} <span class="muted">· record {{ s.record_id }} · pulled {{ s.pulled_at }}{% if s.match_method not in ('spine', None) %} · matched by {{ s.match_method }}{% if s.match_score %} ({{ s.match_score|round|int }}){% endif %}{% endif %}</span></li>
+      {% endfor %}</ul>
+    </section>
+  </div>
+
+  <aside class="stack-lg">
+    {% with business_id=b.business_id %}{% include "partials/save_form.html" %}{% endwith %}
+    <section class="card">
+      <h2 class="h-sm">Run the numbers</h2>
+      <p class="muted small">Model an SBA 7(a) purchase: debt service, DSCR and the cash you'd need.</p>
+      <a class="btn btn-ghost" href="/deal-math?business_id={{ b.business_id }}">Open deal math</a>
+    </section>
+  </aside>
+</div>
+{% endblock %}

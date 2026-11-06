@@ -4,25 +4,41 @@ Auth: `Authorization: Bearer dfk_...` or `X-API-Key: dfk_...`.
 """
 from __future__ import annotations
 
-from typing import Iterator
-
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.sessions import SessionMiddleware
 
 from .. import db
+from ..config import get_settings
 from ..services import accounts
 from ..services.accounts import AuthError, PlanError
 from ..services.business import NotFound
 from ..services.deal_math import DealInputs
 from ..services.ops import Ops
 from ..services.search import SearchParams
+from ..web import auth as web_auth
+from ..web.routes import HERE as WEB_DIR
+from ..web.routes import LoginRequired, login_redirect
+from ..web.routes import router as web_router
 
 app = FastAPI(
     title="Deal Feed API",
     version="0.1.0",
     description="Off-market small-business targets in the Upper Midwest, scored by likelihood to sell.",
 )
+
+# Web app (server-rendered, same process). Session cookie is signed, HttpOnly, SameSite=Lax.
+app.add_middleware(SessionMiddleware, secret_key=web_auth.session_secret(), same_site="lax",
+                   https_only=get_settings().env == "production", max_age=60 * 60 * 24 * 30)
+app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
+app.include_router(web_router)
+
+
+@app.exception_handler(LoginRequired)
+async def _login(_: Request, e: LoginRequired):
+    return login_redirect(e.next_url)
 
 
 @app.exception_handler(AuthError)
@@ -45,13 +61,7 @@ async def _bad(_: Request, e: ValueError):
     return JSONResponse({"detail": str(e)}, status_code=400)
 
 
-def get_conn() -> Iterator:
-    # One connection per request keeps v1 simple. Switch to psycopg_pool when hosted.
-    conn = db.connect()
-    try:
-        yield conn
-    finally:
-        conn.close()
+get_conn = db.request_conn
 
 
 def get_ops(conn=Depends(get_conn), authorization: str | None = Header(None),
